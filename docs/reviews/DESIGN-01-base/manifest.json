@@ -1,0 +1,56 @@
+{
+  "capturedAtUtc": "2026-10-03T10:19:21.5457700Z",
+  "purpose": "Pre-Anti design snapshot for DESIGN-01 diff review; not a review result or approval.",
+  "files": [
+    {
+      "source": "docs/BASELINE.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/BASELINE.md",
+      "sha256": "4B75444946AFB65CF12BAC6EFD29FAD23A9D2BD12EA19CA5B14185A2CD6F3188"
+    },
+    {
+      "source": "docs/ARCHITECTURE.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/ARCHITECTURE.md",
+      "sha256": "18C672010AD4027F6F92AEA5BCF9C46AE05596535A01C9A06567BC291B38BE59"
+    },
+    {
+      "source": "docs/DATABASE.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/DATABASE.md",
+      "sha256": "769A7A6CE83EC06606992A8CF99C2B3543928D07138501C0277F0AD3F8567F61"
+    },
+    {
+      "source": "docs/SECURITY.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/SECURITY.md",
+      "sha256": "6F3B2F0EB8FD71B56E1D5739CE61AFD82F379191640629A5FF3B2158E930998D"
+    },
+    {
+      "source": "docs/API_CONTRACT.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/API_CONTRACT.md",
+      "sha256": "A9E86EDFA4E6A39EC7D3E2819AA5F2B13425C0E3D1B572DEFB74396D3BE321B3"
+    },
+    {
+      "source": "docs/FLOW_PACKING.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/FLOW_PACKING.md",
+      "sha256": "7169295225F69BF152461D8425195806F74E79BA22C49B08F713E29CCA44C701"
+    },
+    {
+      "source": "docs/VIDEO_PROCESSING.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/VIDEO_PROCESSING.md",
+      "sha256": "881E4CA60575942FA1F1F223A8C9436D1D85472492BC4E88D162FAF6A86F6FCE"
+    },
+    {
+      "source": "docs/DEPLOYMENT.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/DEPLOYMENT.md",
+      "sha256": "C57991E6AC9DEDDE0E860B82AB7649C3CC5A8ECC37372C0EA6117EC61FAEF232"
+    },
+    {
+      "source": "docs/FOLDER_STRUCTURE.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/FOLDER_STRUCTURE.md",
+      "sha256": "62EEFADFA37E0B5D3B65FF4990626D7381E9C2E10322E33F1138885FCCE9C835"
+    },
+    {
+      "source": "docs/TODO.md",
+      "snapshot": "docs/reviews/DESIGN-01-base/TODO.md",
+      "sha256": "217D3BF4EF6064EA9B70F5EACD6C19453EED0A1FD3A0545FDBBF9A414AB34765"
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+diff --git a/docs/reviews/DESIGN-01-base/VIDEO_PROCESSING.md b/docs/VIDEO_PROCESSING.md
+index b23c58e..50e9001 100644
+--- a/docs/reviews/DESIGN-01-base/VIDEO_PROCESSING.md
++++ b/docs/VIDEO_PROCESSING.md
+@@ -1,28 +1,37 @@
+ # PACKING VIDEO PROOF - VIDEO PROCESSING & FFMPEG ENGINE SPECIFICATION
+ 
+-> **Design draft:** Read [BASELINE.md](BASELINE.md) first. Examples below require alignment with its open contracts and acceptance gates before implementation; they are not validated production configurations.
+-
+-> **Document Version:** 1.0.0  
+-> **Topic:** Camera Connectivity, FFmpeg Parameters, Container Optimization & Fail-Safe Finalization
++> **Document Version:** 2.0.0 (Updated to Baseline Alignment)  
++> **Topic:** Camera Connectivity, FFmpeg Parameters, Fragmented MP4 Container Optimization & Crash Recovery
+ 
+ ---
+ 
+-## 1. Supported Video Sources
++## 1. Video Ingestion: Fragmented MP4 (fMP4) Architecture
++
++### 1.1. Why Standard MP4 is Dangerous in Warehouses
++Standard MP4 files store the file index (`moov` atom) at the very end of the file. If power cuts, FFmpeg is abruptly killed, or the PC shuts down mid-recording, the `moov` atom is never written. The recorded video file becomes **100% corrupted and unplayable**.
+ 
+-### 1.1. RTSP IP Cameras (H.264 / H.265)
+-- Standard industrial surveillance cameras (Hikvision, Dahua, Imou, Ezviz, Uniview).
+-- Connection transport: **TCP** (`-rtsp_transport tcp`) to prevent packet drop/corruption over warehouse WiFi/LAN.
+-- Video stream pass-through: When camera already outputs H.264, FFmpeg operates in direct copy mode (`-c:v copy`), using near-zero CPU.
++### 1.2. The Solution: Ingestion as Fragmented MP4 (`fMP4`)
++During active recording, FFmpeg writes in fragments (`moof` + `mdat` pairs) every keyframe.
++- Even if the PC loses power abruptly at second 42, **all 42 seconds of video are preserved on disk** and immediately playable!
++- Upon normal completion, the Worker performs a near-instantaneous copy-remux to standard faststart MP4 for universal web browser playback.
+ 
+-### 1.2. USB Webcams (Windows DirectShow)
+-- Plug-and-play USB cameras (Logitech C920/C922/Brio, Rapoo, etc.).
+-- Input format: `-f dshow -i video="Camera Name"`.
+-- Hardware-accelerated or CPU encoding: H.264 via `libx264`, `h264_qsv` (Intel QuickSync), or `h264_nvenc` (NVIDIA).
++```
++[ Camera Stream ] 
++       │
++       ▼
++[ FFmpeg Ingestion ] ──> D:\PackingVideoTemp\session_{id}.fmp4  (Crash-proof Fragmented MP4)
++       │
++       ▼ (Normal Stop: 'q' or SIGINT)
++[ Remux to Faststart ] ──> D:\PackingVideo\YYYY\MM\DD\{filename}.mp4 (-c copy -movflags +faststart)
++       │
++       ▼
++[ SHA-256 Checksum + Thumbnail Extraction ]
++```
+ 
+ ---
+ 
+-## 2. Recommended FFmpeg Command Lines
++## 2. Production FFmpeg Command Lines
+ 
+-### 2.1. RTSP IP Camera (Zero CPU Transcoding - Copy Mode)
++### 2.1. Ingestion: RTSP IP Camera (Zero CPU Transcoding - Copy Mode)
+ ```bash
+ ffmpeg -y \
+@@ -31,9 +40,9 @@ ffmpeg -y \
+   -c:v copy \
+   -an \
+-  -movflags +faststart \
+-  "D:\PackingVideoTemp\session_43924f0c.tmp.mp4"
++  -movflags empty_moov+default_base_moof+frag_keyframe \
++  "D:\PackingVideoTemp\session_43924f0c.fmp4"
+ ```
+ 
+-### 2.2. USB Webcam (Windows DirectShow - Software x264 Encoding)
++### 2.2. Ingestion: USB Webcam (Windows DirectShow - Software x264 Encoding)
+ ```bash
+ ffmpeg -y \
+@@ -47,9 +56,18 @@ ffmpeg -y \
+   -pix_fmt yuv420p \
+   -an \
++  -movflags empty_moov+default_base_moof+frag_keyframe \
++  "D:\PackingVideoTemp\session_43924f0c.fmp4"
++```
++
++### 2.3. Finalization Remux (Sub-second execution: -c copy)
++```bash
++ffmpeg -y \
++  -i "D:\PackingVideoTemp\session_43924f0c.fmp4" \
++  -c copy \
+   -movflags +faststart \
+-  "D:\PackingVideoTemp\session_43924f0c.tmp.mp4"
++  "D:\PackingVideo\2026\10\03\SPXVN123456_PACK01_20261003_163012.mp4"
+ ```
+ 
+-### 2.3. Extracting High-Definition Thumbnail (Proof Snapshot)
++### 2.4. Thumbnail Extraction
+ ```bash
+ ffmpeg -y \
+@@ -63,21 +81,16 @@ ffmpeg -y \
+ ---
+ 
+-## 3. Graceful Termination & Container Integrity
+-
+-### 3.1. The MP4 Atom Problem
+-Standard MP4 files store their index header (the `moov` atom) at the end of the file. If FFmpeg is killed violently (e.g. `taskkill /F` or `SIGKILL`), the `moov` atom is never written, resulting in an unplayable corrupted video.
+-
+-### 3.2. Solution Architecture
+-1. **Interactive Standard Input Command:** The Worker sends the character `q\n` into FFmpeg's `stdin` pipe.
+-2. **Signal Fallback:** If FFmpeg does not exit within 3 seconds, send `SIGINT` (Ctrl+C emulation).
+-3. **Emergency Index Repair Tool:** If an unclean shutdown occurred (e.g. power outage), on worker startup it scans `D:\PackingVideoTemp` and runs `untrunc` or `ffmpeg -err_detect ignore_err -i corrupt.tmp.mp4 -c copy fixed.mp4` to recover the proof.
+-
+----
+-
+-## 4. Cryptographic Proof & SHA-256 Pipeline
+-
+-The raw recorded file must be proven untampered:
+-1. Immediately upon FFmpeg process closure, the Worker reads the finalized MP4 via a streaming Node.js `crypto.createHash('sha256')`.
+-2. Hash is calculated in under 100ms for a typical 10–20MB file.
+-3. The SHA-256 string is transmitted to the Backend API and recorded in the immutable database row.
+-4. Any future dispute inquiry can re-run hash verification via `POST /api/v1/videos/:id/verify-hash`.
++## 3. Crash Recovery & Orphaned File Reconciliation
++
++When the Video Worker service boots (e.g. after PC reboot or unexpected termination):
++1. **Directory Sweep:** The Worker scans `D:\PackingVideoTemp` for unfinished files (`*.fmp4`, `*.tmp.mp4`).
++2. **Integrity Probe:** For each file:
++   - Run `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 file.fmp4`.
++   - If duration > 0: Worker remuxes the recovered fragment:
++     ```bash
++     ffmpeg -err_detect ignore_err -i file.fmp4 -c copy -movflags +faststart recovered.mp4
++     ```
++   - Calculate SHA-256 of the recovered video.
++   - Report to Backend API via WSS `WORKER_CRASH_RECOVERED` with the recovered file path, duration, and SHA-256.
++   - Backend marks the interrupted session as `FAILED_WITH_PARTIAL_PROOF` so forensic evidence is never lost.
++3. **Dead File Cleanup:** Orphaned 0-byte files with no stream headers are deleted after 24 hours.

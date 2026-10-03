@@ -1,0 +1,267 @@
+diff --git a/docs/reviews/DESIGN-01-base/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 9993e40..c12c696 100644
+--- a/docs/reviews/DESIGN-01-base/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -1,23 +1,34 @@
+-# PACKING VIDEO PROOF - SYSTEM ARCHITECTURE
++# PACKING VIDEO PROOF - SYSTEM ARCHITECTURE SPECIFICATION
+ 
+-> **Design draft:** Read [BASELINE.md](BASELINE.md) first. Examples below require alignment with its open contracts and acceptance gates before implementation; they are not validated production configurations.
+-
+-> **Document Version:** 1.0.0  
+-> **Status:** Phase 1 Design Specification  
+-> **Target Audience:** Engineering Team, System Architects, DevOps, QA
++> **Document Version:** 2.0.0 (Updated to Baseline Alignment)  
++> **Status:** Architecture Baseline Specification  
++> **Scope:** On-Premises LAN-First Packing Proof System
+ 
+ ---
+ 
+-## 1. Executive Summary & Core Philosophy
+-
+-**PACKING VIDEO PROOF** is a specialized, high-reliability video recording and audit trail system for fulfillment warehouses, e-commerce operations (Shopee, TikTok Shop, Lazada), and 3PL fulfillment hubs.
+-
+-### Core Tenets
+-1. **Zero Cloud Dependency (LAN-First):** The warehouse must operate seamlessly during internet outages. Local recording, database transactions, and proof verification function entirely within the local area network.
+-2. **Fail-Safe Video Pipeline:** Video is **never** written directly across network shares (SMB/NAS) during recording. Network latency or transient SMB disconnects must never corrupt an active packing recording.
+-   $$\text{Camera} \xrightarrow{\text{RTSP/USB}} \text{FFmpeg} \xrightarrow{\text{RAM/NVMe}} \text{Local Temp} \xrightarrow{\text{Finalize + SHA256}} \text{Local Storage} \xrightarrow{\text{Async Queue}} \text{NAS / Share}$$
+-3. **Data Immutability & Forensic Integrity:** The primary video file is immutable. The exact cryptographic hash (SHA-256) is recorded immediately upon stream finalization. Any subsequent watermarking or trimming creates a derivative artifact; the original raw proof is never altered.
+-4. **Physical Warehouse Ergonomics:** The packing UI is purpose-built for warehouse packing stations (1366x768 resolution minimum, high-contrast, visible from 1.5–2 meters, zero mouse requirement, 100% USB barcode scanner driven).
+-5. **Separation of Concerns:** Strict isolation between Admin management, Packing execution, Backend orchestration, and Media processing.
++## 1. Executive Summary & Design Principles
++
++**PACKING VIDEO PROOF** is an enterprise-grade, fail-safe video recording and forensic audit system designed for warehouse fulfillment hubs, 3PL providers, and e-commerce operators (Shopee, TikTok Shop, Lazada).
++
++### Core Architectural Principles
++
++1. **LAN-First Sovereignty (Zero Cloud Dependency):**
++   - Core fulfillment operations (barcode scanning, camera stream ingestion, local storage, verification) function with zero external internet connectivity.
++   - Server and station communication occurs strictly over local LAN infrastructure.
++2. **Fail-Safe Video Ingestion Pipeline (Never Record Directly to Network Shares):**
++   - Active recordings **never** stream directly to SMB/NAS storage due to transient network latency, SMB locks, and packet loss risks.
++   $$\text{Camera} \xrightarrow{\text{RTSP/UVC}} \text{Worker Process} \xrightarrow{\text{Direct I/O}} \text{Local SSD Temp (fMP4)} \xrightarrow{\text{Finalize + SHA256}} \text{Local Primary Archive} \xrightarrow{\text{Async Verified Queue}} \text{NAS / SMB Share}$$
++3. **Container Crash-Resilience (Fragmented MP4 Ingestion):**
++   - Standard MP4 stores its metadata index (`moov` atom) at the end of the file. Sudden power cuts or OS crashes destroy unfinalized MP4s.
++   - The ingestion pipeline records to **Fragmented MP4 (fMP4)** (`empty_moov+default_base_moof+frag_keyframe`). Even if power fails mid-recording, all frames up to the last keyframe are preserved and playable without corruption.
++   - The finalization step remuxes the file to standard web-optimized MP4 (`+faststart`).
++4. **Strict Concurrency Protection & Single Active Session Rule:**
++   - One packing station and one camera can execute **at most one active recording session** at any time across the entire database.
++   - Guaranteed by PostgreSQL conditional unique indexes and transactional locks, not just frontend debounce.
++5. **Decoupled Architecture & Role Boundaries:**
++   - **Admin Web:** Management, configuration, audit, video search (no direct DB or filesystem access).
++   - **User Web:** Scanning, session status display, operator triggers (no local recording logic).
++   - **Backend API:** Central business authority, RBAC, outbox coordinator, metadata manager.
++   - **Video Worker:** Host-level camera driver, FFmpeg supervisor, local SSD manager, NAS sync worker.
+ 
+ ---
+@@ -27,42 +38,42 @@
+ ```
+ +----------------------------------------------------------------------------------------------------+
+-|                                      PACKING VIDEO PROOF LAN                                       |
++|                                    PACKING VIDEO PROOF WAREHOUSE LAN                                |
+ +----------------------------------------------------------------------------------------------------+
+ |                                                                                                    |
+ |    +-----------------------------+                           +--------------------------------+     |
+ |    |      ADMIN WEB (Vite/React) |                           |     USER WEB (Vite/React)      |     |
+-|    |  - Station/Camera Config    |                           |  - Packing Station Screen      |     |
++|    |  - Warehouse/Station Config |                           |  - Packing Station Screen      |     |
+ |    |  - Video Search & Proof     |                           |  - USB Scanner (HID Keyboard)  |     |
+-|    |  - Storage & Retention      |                           |  - Giant Status & Live Stream  |     |
++|    |  - Retention & Dispute Lock |                           |  - Giant State & Timer (2m)    |     |
+ |    +--------------+--------------+                           +---------------+----------------+     |
+ |                   |                                                          |                      |
+-|                   | REST API / JWT                                           | REST / WebSockets    |
++|                   | HTTPS (REST API / JWT)                                   | HTTPS / WSS          |
+ |                   v                                                          v                      |
+ |    +------------------------------------------------------------------------------------------+     |
+-|    |                                  BACKEND API SERVICE (Fastify/NestJS)                    |     |
+-|    |  - Auth & RBAC (Argon2/JWT)                 - Packing Session State Machine              |     |
+-|    |  - Barcode Validation Engine                - Audit Logging & System Event Bus           |     |
+-|    |  - Storage Manager & Retention Engine       - Worker Coordination & Health Monitor       |     |
++|    |                             BACKEND API SERVER (Fastify + TypeScript)                     |     |
++|    |  - Multi-Warehouse RBAC (Argon2 / JWT)       - Barcode Validation Engine                 |     |
++|    |  - Command Outbox & Idempotency Router       - Session State Machine (OCC Versioning)    |     |
++|    |  - Worker Dispatcher Gateway (WSS)           - Video Streaming Range Proxy (HTTP 206)    |     |
+ |    +----------------------------+---------------------------------------------+---------------+     |
+ |                                 |                                             |                     |
+-|                   Prisma/Drizzle|ORM                             Internal HTTP|/ WebSocket RPC      |
++|            PostgreSQL Connection|Pool                                      WSS|Reverse Tunnel       |
++|            (Conditional Indexes)|                                  (Auth Token|& Heartbeat 10s)     |
+ |                                 v                                             v                     |
+ |    +----------------------------+---------+          +------------------------+---------------+     |
+-|    |          POSTGRESQL 16               |          |           VIDEO WORKER SERVICE         |     |
+-|    |  - Users, Roles, Stations            |          |  (Node.js Native + Child Process FFmpeg)|     |
+-|    |  - Packing Sessions & Orders         |          |  - Camera Monitor (RTSP/Webcam)        |     |
+-|    |  - Video Metadata & SHA256 Hashes    |          |  - FFmpeg Process Lifecycle Manager    |     |
+-|    |  - Retention & Dispute Locks         |          |  - SHA256 & Thumbnail Generator        |     |
+-|    +--------------------------------------+          |  - Local File -> NAS Sync Engine       |     |
+-|                                                      |  - Heartbeat & Health Telemetry        |     |
++|    |          POSTGRESQL 16               |          |       VIDEO WORKER (STATION PC)        |     |
++|    |  - Business, Warehouses, Stations    |          |  - Node.js Daemon (Local Loopback 4005)|     |
++|    |  - Packing Sessions (Conditional UQ) |          |  - Persistent WSS Client to Backend    |     |
++|    |  - Video Metadata & SHA-256 Hashes   |          |  - FFmpeg Supervisor (fMP4 Ingestion)  |     |
++|    |  - Command Outbox & Audit Logs       |          |  - SHA-256 Hasher & Local File Manager |     |
++|    +--------------------------------------+          |  - NAS Copy Queue (Retry & Backoff)    |     |
+ |                                                      +-----+--------------------+-------------+     |
+ |                                                            |                    |                   |
+-|                                         Direct Capture / OS|Device              | Disk I/O & SMB    |
++|                                     RTSP TCP / DirectShow  |                    | Atomic Move & SMB |
+ |                                                            v                    v                   |
+ |                                                +-----------+--+     +-----------+-------------+     |
+ |                                                | CAMERAS      |     | STORAGE SUB-SYSTEM      |     |
+-|                                                | - RTSP H.264 |     | 1. Local Temp SSD       |     |
+-|                                                | - USB Webcams|     | 2. Local Final Archive  |     |
+-|                                                +--------------+     | 3. NAS / Windows Share  |     |
++|                                                | - RTSP H.264 |     | 1. Local Temp (D:\Temp) |     |
++|                                                | - USB Webcams|     | 2. Local Final (D:\Vid) |     |
++|                                                +--------------+     | 3. NAS Share (\\NAS\Vid)|     |
+ |                                                                     +-------------------------+     |
+ +----------------------------------------------------------------------------------------------------+
+@@ -71,100 +82,56 @@
+ ---
+ 
+-## 3. Subsystem Breakdown & Responsibilities
+-
+-### 3.1. Frontend Modules (`/apps`)
+-1. **Admin Web (`/apps/admin-web`):**
+-   - Independent Single Page Application (SPA).
+-   - Serves warehouse managers, system admins, CSKH, and auditors.
+-   - Comprehensive CRUD for Warehouses, Stations, Cameras, Users, and Storage configurations.
+-   - Video proof search portal with live playback, download, copy path, and cryptographic SHA-256 verification.
+-   - Dashboard with telemetry: Orders/hour, cameras online/offline, worker heartbeat, disk utilization, sync queues.
+-
+-2. **User Web (`/apps/user-web`):**
+-   - Lightweight, ultra-responsive packing interface.
+-   - Optimized for touchscreens and barcode guns (auto-focusing hidden/visible inputs, ENTER interception).
+-   - Station-locked mode (persisted station UUID in local storage or URL parameter).
+-   - Real-time video preview using low-latency WebRTC/MSE/HLS/MJPEG stream proxies provided by the worker.
+-   - Visual and audio cues (chimes for success, warning buzzers for duplicate or conflicting scans).
+-
+-### 3.2. Backend API (`/apps/backend-api`)
+-- Built with **Node.js (TypeScript) + Fastify** (high throughput, low latency) or **NestJS**.
+-- **REST Endpoints:** Authentication, Session CRUD, Camera metadata, Order searches, Dispute locks, Logs.
+-- **WebSocket Gateway:**
+-  - Real-time station state dispatching (RECORDING, PROCESSING, COMPLETED, FAILED).
+-  - Worker health monitor (tracks 10s heartbeats, marks worker OFFLINE after 30s of silence).
+-- **Security & Crypto:**
+-  - Passwords hashed with **Argon2id**.
+-  - RTSP passwords and NAS network share credentials stored with **AES-256-GCM** with an environment-injected Master Key.
+-
+-### 3.3. Video Worker (`/apps/video-worker`)
+-- Autonomous Node.js daemon running on the station host machine or an edge server with physical/network access to the cameras.
+-- **FFmpeg Orchestration:**
+-  - Spawns and supervises FFmpeg child processes with stdout/stderr pipes.
+-  - Graceful stop via `q` command on standard input or `SIGINT` to ensure MP4 container atoms (`moov`) are finalized without corrupting the file.
+-  - Automatically falls back to `-movflags +faststart` to guarantee immediate web browser playback capability.
+-- **Local Pipeline Execution:**
+-  - Temporary recording to `D:\PackingVideoTemp\session_{id}.tmp.mp4`.
+-  - Atomically renames/moves completed file to structured local directory `D:\PackingVideo\YYYY\MM\DD\{filename}.mp4`.
+-  - Computes SHA-256 stream hash during post-processing.
+-  - Extracts representative video thumbnail (JPEG) at 1.0 second mark.
+-- **Reliable Storage Sync Engine:**
+-  - In-memory queue with SQLite/disk-backed state persistence for failed copy jobs.
+-  - Syncs to Windows UNC paths (e.g. `\\SERVER\PackingVideo\...`) using buffered streams.
+-  - If NAS is unreachable, sets DB `sync_status = 'PENDING'` and backs off exponentially without blocking packing operations.
+-
+-### 3.4. Shared Packages (`/packages`)
+-- **`shared-types`**: TypeScript interfaces, enums, DTOs, and API response schemas shared across all apps.
+-- **`shared-utils`**: Common validation helpers (barcode parser, date formatting, cryptographic wrappers).
+-- **`shared-ui`**: Tailored Tailwind CSS component design tokens and base components (badges, modals, buttons).
+-- **`database`**: Prisma schema, client generation, migration scripts, and seed data.
++## 3. Communication Topology & Network Contracts
+ 
+----
++### 3.1. Topology Architecture
++In enterprise warehouse deployments, the system topology consists of:
++1. **Central Server Node (`192.168.1.10`):** Runs PostgreSQL, Backend API, and serves frontend static bundles via Nginx reverse proxy.
++2. **Station Packing PCs (`192.168.1.51...70`):** Windows 10/11 PCs with USB Barcode Scanners, connected to USB Webcams or local PoE RTSP cameras.
++3. **NAS / Storage Server (`192.168.1.15`):** High-capacity redundant array hosting Windows SMB Share `\\SERVER\PackingVideo`.
+ 
+-## 4. Hardware & Storage Topology
++### 3.2. Worker-to-Backend Reverse Tunnel (Agent Pattern)
++To eliminate fragile inbound routing to station PCs (DHCP IP changes, Windows firewall blocks, NAT):
++- Each Video Worker initializes a persistent **WebSocket connection** (`wss://<server-ip>:4000/ws/worker`) upon boot.
++- The connection is authenticated using a per-station cryptographically generated `X-Worker-Token`.
++- **Backend-to-Worker Commands:** The Backend dispatches commands (`START_RECORD`, `STOP_RECORD`, `CANCEL_RECORD`) over this established tunnel.
++- **Worker-to-Backend Telemetry:** The Worker streams heartbeats every 10 seconds (`ONLINE`, CPU, active session, disk space free) and pushes real-time recording milestones (`STREAM_READY`, `FIRST_KEYFRAME`, `FINALIZED`, `SYNC_STATUS`).
++- **Local Fallback:** In single-PC / standalone kiosk setups, loopback HTTP (`http://127.0.0.1:4005`) is also supported.
+ 
+-### 4.1. Directory Structure on Local Disk & NAS
+-```
+-Storage Root (e.g., D:\PackingVideo or \\SERVER\PackingVideo)
+-  └── 2026/
+-      └── 10/
+-          └── 03/
+-              ├── SPXVN123456_PACK01_20261003_163012.mp4
+-              ├── SPXVN123456_PACK01_20261003_163012.jpg   (Thumbnail)
+-              └── SPXVN123456_PACK01_20261003_163012.json  (Proof Sidecar)
+-```
+-
+-### 4.2. Disk Space & Bandwidth Sizing
+-- **Video Standard:** 1080p (1920x1080) @ 25fps or 720p (1280x720) @ 25fps.
+-- **Video Codec:** H.264 (libx264 or hardware NVENC/QSV), CRF 26, Preset: `veryfast`.
+-- **Bitrate Average:** ~1.2 Mbps to 1.8 Mbps.
+-- **Average Packing Duration:** 45 seconds $\rightarrow$ ~8 MB to 12 MB per order.
+-- **Daily Volume (1,000 orders/day):** ~10 GB to 12 GB/day.
+-- **Monthly Volume (30 days):** ~300 GB to 360 GB.
+-- **Local Drive Recommendation:** Minimum 512 GB NVMe SSD for OS + Temporary Buffer + 14-day rolling buffer, backed by 4TB–16TB NAS for 90–365 day retention.
++### 3.3. Remote Video Playback Architecture (Local vs. NAS)
++When an administrator in Admin Web requests to view a video:
++- **Case 1: Video is `SYNCED` to NAS:** Backend API streams the file directly from the NAS mount path using HTTP 206 Partial Content range requests.
++- **Case 2: Video is still `LOCAL` (pending NAS sync):** Backend API delegates the stream by issuing an authenticated internal reverse-proxy request to the Station Worker's media streaming port, or fetches the file chunk on demand. The User Web never accesses `D:\` directly.
+ 
+ ---
+ 
+-## 5. Reliability & Resilience Patterns
+-
+-| Failure Scenario | System Reaction | Prevention / Recovery Strategy |
+-| :--- | :--- | :--- |
+-| **NAS / Network Share Drops** | Local recording finishes normally. Status flagged `PENDING`. | Sync daemon detects network error, holds file in local archive, queues retry. UI never blocks packing. |
+-| **Camera RTSP Signal Lost** | FFmpeg exits with error code or stalls. | Worker detects pipe close, logs `CAMERA_ERROR`, signals Backend. User Web displays bold red `CAMERA DISCONNECTED` warning. |
+-| **Worker Crashes during Recording** | Orphaned temp file exists. | On worker restart, sweeps `PackingVideoTemp`, repairs unfinalized MP4 using `ffmpeg -i ... -c copy`, marks session `FAILED` or saves partial proof. |
+-| **Operator Scans While Recording** | Scan captured by debounce/state check. | Modal halts change. User must choose: "Complete Current & Start New" or "Cancel Scan". |
+-| **Full Local Disk Hazard** | Monitored by Worker every 60 seconds. | If free space < 10 GB: Alert. If free space < 2 GB: Emergency halt of new recordings to prevent corrupt writes. |
+-
+----
++## 4. State Machine & Idempotency Rules
++
++### 4.1. Formal Session State Transitions
++```mermaid
++stateDiagram-v2
++    [*] --> WAITING: User scans / calls start (202 Accepted)
++    WAITING --> RECORDING: Worker confirms stream & first keyframe
++    WAITING --> FAILED: Worker timeout / camera offline (30s)
++    
++    RECORDING --> PROCESSING: User stops / scans next (202 Accepted)
++    RECORDING --> CANCELLED: Operator cancels / aborts
++    RECORDING --> FAILED: FFmpeg process crash / disk full
++    
++    PROCESSING --> COMPLETED: Finalized MP4 verified, SHA256 hashed, metadata saved
++    PROCESSING --> FAILED: Finalization failure / disk read error
++    
++    COMPLETED --> [*]
++    CANCELLED --> [*]
++    FAILED --> [*]
++```
+ 
+-## 6. Technology Stack Summary
+-
+-| Layer | Selected Technology | Justification |
+-| :--- | :--- | :--- |
+-| **Frontend Framework** | React 18 + TypeScript + Vite | Blazing fast build, strong typing, battle-tested ecosystem |
+-| **Styling** | Tailwind CSS + Lucide Icons | Clean utility-first design, easy customization for high-contrast warehouse UI |
+-| **State & API Query** | TanStack Query v5 + Zustand | Efficient caching, automatic background refetching, lightweight station state |
+-| **Backend Framework** | Fastify (or NestJS with Fastify) | Benchmark leader in Node.js ecosystem, native schema validation with TypeBox/Zod |
+-| **Database** | PostgreSQL 16 + Prisma ORM | ACID compliance, robust indexing on tracking codes, JSONB support for logs |
+-| **Video Engine** | FFmpeg (Native binary) | Universal RTSP/UVC driver support, mature H.264 encoding, rock-solid stability |
+-| **Deployment / OS** | Windows 10/11 Pro & Windows Server / Linux Docker | Native support for Windows USB scanners, DirectShow webcam capture & SMB shares |
++### 4.2. Concurrency & Idempotency Rules
++1. **Idempotency Key Enforcement:** Every mutation (`start`, `stop`, `cancel`) requires an `Idempotency-Key` header (UUIDv4).
++   - If an operation is received with an existing key and identical payload: Backend returns the cached session response.
++   - If an operation is received with an existing key but conflicting payload: Backend returns `409 Conflict` (`IDEMPOTENCY_PAYLOAD_MISMATCH`).
++2. **Single Active Session Constraint:**
++   - Enforced at the DB level via PostgreSQL partial unique index:
++     `CREATE UNIQUE INDEX uq_active_station_session ON packing_sessions (station_id) WHERE status IN ('WAITING', 'RECORDING', 'PROCESSING');`
++   - Any parallel race attempt to open a second session on the same station instantly fails with a DB unique constraint violation (`409 Conflict`).
++3. **Optimistic Concurrency Control (OCC):**
++   - Tables `packing_sessions` and `videos` contain an integer `version` column. State transitions increment `version` and check `WHERE id = :id AND version = :currentVersion`.

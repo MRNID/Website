@@ -1,0 +1,442 @@
+diff --git a/docs/reviews/DESIGN-01-base/API_CONTRACT.md b/docs/API_CONTRACT.md
+index 26ae958..4005831 100644
+--- a/docs/reviews/DESIGN-01-base/API_CONTRACT.md
++++ b/docs/API_CONTRACT.md
+@@ -1,7 +1,5 @@
+-# PACKING VIDEO PROOF - REST API & RPC CONTRACT
++# PACKING VIDEO PROOF - REST API & WORKER RPC CONTRACT
+ 
+-> **Design draft:** Read [BASELINE.md](BASELINE.md) first. Examples below require alignment with its open contracts and acceptance gates before implementation; they are not validated production configurations.
+-
+-> **Document Version:** 1.0.0  
++> **Document Version:** 2.0.0 (Updated to Baseline Alignment)  
+ > **API Version:** v1  
+ > **Base URL:** `/api/v1`  
+@@ -10,87 +8,38 @@
+ ---
+ 
+-## 1. Authentication & Security Headers
++## 1. Authentication, Resource Scoping & Idempotency
+ 
+-All protected endpoints require a standard Bearer token header:
++### 1.1. Security Headers & Scoping
++All protected endpoints require:
+ ```http
+ Authorization: Bearer <access_token>
+ ```
++**Resource Authorization Rule:** The backend strictly verifies that the user belongs to the same `warehouse_id` as the targeted `station_id`. Attempting to access or operate a station outside the user's assigned warehouse returns `403 Forbidden` (`WAREHOUSE_ACCESS_DENIED`), regardless of the client-side URL or localStorage.
+ 
+-### Standard Response Envelope
+-```json
+-{
+-  "success": true,
+-  "data": {},
+-  "meta": {
+-    "timestamp": "2026-10-03T09:30:00.000Z",
+-    "requestId": "req_88f9a2b"
+-  }
+-}
+-```
+-
+-### Standard Error Response
+-```json
+-{
+-  "success": false,
+-  "error": {
+-    "code": "BARCODE_ACTIVE_RECORDING",
+-    "message": "Station is currently recording another order.",
+-    "details": {
+-      "activeTrackingCode": "SPXVN111111",
+-      "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269"
+-    }
+-  },
+-  "meta": {
+-    "timestamp": "2026-10-03T09:30:00.000Z",
+-    "requestId": "req_88f9a2b"
+-  }
+-}
+-```
+-
+----
+-
+-## 2. Authentication Endpoints
+-
+-### 2.1. `POST /api/v1/auth/login`
+-Authenticates user and returns JWT pair.
+-
+-**Request Body:**
+-```json
+-{
+-  "username": "packer01",
+-  "password": "SecurePassword123!"
+-}
++### 1.2. Idempotency Key Specification
++Mutating requests (`POST /packing/start`, `POST /packing/stop`, `POST /packing/cancel`) must include:
++```http
++Idempotency-Key: <UUIDv4>
+ ```
+-
+-**Response (200 OK):**
+-```json
+-{
+-  "success": true,
+-  "data": {
+-    "accessToken": "eyJhbGciOi...",
+-    "refreshToken": "eyJhbGciOi...",
+-    "expiresIn": 28800,
+-    "user": {
+-      "id": "c62bcfca-c73c-4cf4-b529-f196328358ff",
+-      "username": "packer01",
+-      "fullName": "Nguyen Van A",
+-      "role": "PACKING_USER",
+-      "warehouseId": "b1328325-1ec8-4171-aa3e-324c0d0c3c86"
++- **Identical Request Replay:** Returns the original cached response with identical status code.
++- **Key Reused with Mismatched Payload:** Returns `409 Conflict`:
++  ```json
++  {
++    "success": false,
++    "error": {
++      "code": "IDEMPOTENCY_PAYLOAD_MISMATCH",
++      "message": "The idempotency key was previously used with a different request payload."
+     }
+   }
+-}
+-```
+-
+-### 2.2. `POST /api/v1/auth/refresh`
+-Exchanges refresh token for new access token.
++  ```
+ 
+ ---
+ 
+-## 3. Packing Station Operations (User Web)
++## 2. Packing Operations (User Web)
+ 
+-### 3.1. `POST /api/v1/packing/validate-barcode`
+-Validates format and checks duplicate/active states before starting recording.
++### 2.1. `POST /api/v1/packing/validate-barcode`
++Validates barcode format, detects duplicates within the configured warehouse timeframe, and verifies station readiness.
+ 
+-**Request Body:**
++**Request:**
+ ```json
+ {
+@@ -114,5 +63,5 @@ Validates format and checks duplicate/active states before starting recording.
+ ```
+ 
+-**Response (409 Conflict - Already Recorded Today):**
++**Response (409 Conflict - Already Packed):**
+ ```json
+ {
+@@ -130,8 +79,15 @@ Validates format and checks duplicate/active states before starting recording.
+ ```
+ 
+-### 3.2. `POST /api/v1/packing/start`
+-Initializes packing session and triggers Video Worker FFmpeg recording.
++---
++
++### 2.2. `POST /api/v1/packing/start`
++Asynchronously initializes a packing session. Enforces the strict rule that the session begins in `WAITING` and does NOT return `RECORDING` until the worker confirms active video ingestion.
+ 
+-**Request Body:**
++**Headers:**
++```http
++Idempotency-Key: 7b9a5c81-89d4-4a2e-b6a1-0e1d8a4392bc
++```
++
++**Request:**
+ ```json
+ {
+@@ -144,5 +100,5 @@ Initializes packing session and triggers Video Worker FFmpeg recording.
+ ```
+ 
+-**Response (201 Created):**
++**Response (202 Accepted - Session Queued & Worker Dispatched):**
+ ```json
+ {
+@@ -150,17 +106,26 @@ Initializes packing session and triggers Video Worker FFmpeg recording.
+   "data": {
+     "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269",
+-    "status": "RECORDING",
++    "operationId": "op_98124019a",
++    "status": "WAITING",
+     "trackingCode": "SPXVN0458892182B",
+-    "startTime": "2026-10-03T09:30:12.450Z",
+-    "stationName": "PACK_STATION_01",
+-    "cameraName": "CAM_PACK_01"
++    "stationId": "e0bfa923-d34e-4b47-9cb8-db91efb054cc",
++    "message": "Recording command dispatched to station worker. Awaiting stream confirmation."
+   }
+ }
+ ```
+ 
+-### 3.3. `POST /api/v1/packing/stop`
+-Stops FFmpeg recording, triggers SHA-256 calculation and video archival.
++*Note:* When the worker confirms the first keyframe, it emits a WebSocket event `SESSION_STATE_CHANGED` (`status: "RECORDING"`). If the worker does not respond within 15 seconds, the session transitions to `FAILED` with error `CAMERA_INIT_TIMEOUT`.
++
++---
++
++### 2.3. `POST /api/v1/packing/stop`
++Requests graceful stop of active recording. Transitions session to `PROCESSING` while finalization, SHA-256 calculation, and local archival take place.
++
++**Headers:**
++```http
++Idempotency-Key: 3b1a9c82-12d4-4a2e-b6a1-1e1d8a4392dd
++```
+ 
+-**Request Body:**
++**Request:**
+ ```json
+ {
+@@ -169,5 +134,5 @@ Stops FFmpeg recording, triggers SHA-256 calculation and video archival.
+ ```
+ 
+-**Response (200 OK):**
++**Response (202 Accepted - Finalization In Progress):**
+ ```json
+ {
+@@ -175,61 +140,109 @@ Stops FFmpeg recording, triggers SHA-256 calculation and video archival.
+   "data": {
+     "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269",
+-    "status": "COMPLETED",
+-    "video": {
+-      "id": "19b5104d-e9c5-43ea-8b45-0d859fa23f79",
+-      "filename": "SPXVN0458892182B_PACK01_20261003_163012.mp4",
+-      "duration": 42.5,
+-      "fileSize": 10485760,
+-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+-      "thumbnailUrl": "/api/v1/videos/19b5104d-e9c5-43ea-8b45-0d859fa23f79/thumbnail",
+-      "syncStatus": "PENDING"
+-    }
++    "operationId": "op_final_9912a",
++    "status": "PROCESSING",
++    "message": "Stop command acknowledged. FFmpeg is finalizing container and calculating SHA-256."
+   }
+ }
+ ```
+ 
+-### 3.4. `POST /api/v1/packing/cancel`
+-Aborts an in-progress recording session without producing a permanent proof.
++---
++
++### 2.4. `GET /api/v1/packing/stations/:id/active`
++Reconnection snapshot endpoint. When the User Web tab refreshes or reconnects after network blip, it queries this endpoint to reconstruct exact station state.
++
++**Response (200 OK):**
++```json
++{
++  "success": true,
++  "data": {
++    "stationId": "e0bfa923-d34e-4b47-9cb8-db91efb054cc",
++    "stationStatus": "BUSY",
++    "activeSession": {
++      "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269",
++      "trackingCode": "SPXVN0458892182B",
++      "status": "RECORDING",
++      "startTime": "2026-10-03T09:30:12.450Z",
++      "elapsedSeconds": 34
++    },
++    "worker": {
++      "status": "ONLINE",
++      "lastHeartbeat": "2026-10-03T09:30:40.000Z"
++    }
++  }
++}
++```
+ 
+ ---
+ 
+-## 4. Internal Video Worker RPC API
++## 3. Worker WebSocket Communication Protocol (`/ws/worker`)
++
++Video Workers connect outbound to the Backend WebSocket Gateway over `wss://<server-ip>:4000/ws/worker`.
++
++### 3.1. Connection Handshake
++Worker sends header: `X-Worker-Token: <station-secret-token>` and initial payload:
++```json
++{
++  "type": "WORKER_HELLO",
++  "stationId": "e0bfa923-d34e-4b47-9cb8-db91efb054cc",
++  "version": "1.0.0",
++  "os": "Windows 11 Pro",
++  "hostname": "PACK-PC-01"
++}
++```
+ 
+-Communicated over local loopback (`http://127.0.0.1:4005`) between Backend and Worker:
++### 3.2. Heartbeat Ping (Every 10 Seconds)
++```json
++{
++  "type": "WORKER_HEARTBEAT",
++  "stationId": "e0bfa923-d34e-4b47-9cb8-db91efb054cc",
++  "timestamp": "2026-10-03T09:31:00Z",
++  "telemetry": {
++    "freeDiskBytes": 348234823680,
++    "activePid": 4120,
++    "ffmpegHealth": "OK",
++    "nasReachable": true
++  }
++}
++```
+ 
+-### 4.1. `POST /worker/record/start`
+-**Payload:**
++### 3.3. Command Dispatch (Backend $\rightarrow$ Worker)
+ ```json
+ {
++  "type": "COMMAND_DISPATCH",
++  "commandId": "cmd_4819a2b",
++  "command": "START_RECORD",
+   "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269",
+   "camera": {
+     "type": "RTSP",
+-    "url": "rtsp://admin:pass@192.168.1.100:554/ch0"
++    "url": "rtsp://admin:secret@192.168.1.100:554/Streaming/Channels/101"
+   },
+-  "outputFilePattern": "SPXVN0458892182B_PACK01_20261003_163012"
++  "filePattern": "SPXVN0458892182B_PACK01_20261003_163012"
+ }
+ ```
+ 
+-### 4.2. `POST /worker/record/stop`
+-**Payload:**
++### 3.4. Stream Milestone (Worker $\rightarrow$ Backend)
+ ```json
+ {
+-  "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269"
++  "type": "RECORDING_MILESTONE",
++  "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269",
++  "event": "FIRST_KEYFRAME_RECEIVED",
++  "pid": 4120
+ }
+ ```
+ 
+-### 4.3. `GET /worker/health`
+-Returns worker telemetry:
++### 3.5. Finalize Success (Worker $\rightarrow$ Backend)
+ ```json
+ {
+-  "status": "ONLINE",
+-  "activeRecordings": 1,
+-  "ffmpegVersion": "6.0-full",
+-  "localDisk": {
+-    "freeBytes": 348234823680,
+-    "totalBytes": 512110190592,
+-    "tempDisk": "D:\\PackingVideoTemp"
+-  },
+-  "nasConnection": "CONNECTED"
++  "type": "FINALIZE_SUCCESS",
++  "sessionId": "43924f0c-939a-4c20-a6ce-5847fa55f269",
++  "video": {
++    "filename": "SPXVN0458892182B_PACK01_20261003_163012.mp4",
++    "localPath": "D:\\PackingVideo\\2026\\10\\03\\SPXVN0458892182B_PACK01_20261003_163012.mp4",
++    "duration": 42.5,
++    "fileSize": 10485760,
++    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
++    "thumbnailPath": "D:\\PackingVideo\\2026\\10\\03\\SPXVN0458892182B_PACK01_20261003_163012.jpg"
++  }
+ }
+ ```
+@@ -237,26 +250,20 @@ Returns worker telemetry:
+ ---
+ 
+-## 5. Video Proof & Query Endpoints (Admin & CSKH)
++## 4. Video Query & Remote Range Streaming
+ 
+-### 5.1. `GET /api/v1/videos`
+-Search video records by metadata.
++### 4.1. `GET /api/v1/videos/:id/stream`
++Streams video content with HTTP 206 Partial Content byte-range support.
+ 
+-**Query Parameters:**
+-- `trackingCode` (string)
+-- `orderCode` (string)
+-- `startDate` (ISO string)
+-- `endDate` (ISO string)
+-- `stationId` (UUID)
+-- `userId` (UUID)
+-- `warehouseId` (UUID)
+-- `disputeStatus` (NORMAL | DISPUTE | RESOLVED)
+-- `page` (number, default: 1)
+-- `limit` (number, default: 20)
++**Headers Supported:**
++```http
++Range: bytes=0-1048575
++```
+ 
+-### 5.2. `GET /api/v1/videos/:id/stream`
+-Streams the video with full HTTP 206 Partial Content byte-range support for seamless seeking.
++**Location Resolution:**
++1. If `videos.sync_status === 'SYNCED'`: Backend API reads file from NAS path `\\SERVER\PackingVideo\...`.
++2. If `videos.sync_status !== 'SYNCED'` (file remains on Station PC): Backend API transparently reverse-proxies the stream request to the station worker's internal stream endpoint (`http://<station-ip>:4005/worker/video/:id/stream`), authenticated with a short-lived HMAC token.
+ 
+-### 5.3. `POST /api/v1/videos/:id/verify-hash`
+-Re-computes file hash on demand and compares it with the immutable database record.
++### 4.2. `POST /api/v1/videos/:id/verify-hash`
++Recalculates cryptographic SHA-256 directly from physical disk and compares against original database record.
+ 
+ **Response (200 OK):**
+@@ -267,5 +274,5 @@ Re-computes file hash on demand and compares it with the immutable database reco
+     "videoId": "19b5104d-e9c5-43ea-8b45-0d859fa23f79",
+     "dbHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+-    "calculatedHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
++    "diskHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+     "isMatch": true,
+     "verifiedAt": "2026-10-03T16:35:00Z"
+@@ -273,56 +280,2 @@ Re-computes file hash on demand and compares it with the immutable database reco
+ }
+ ```
+-
+-### 5.4. `PATCH /api/v1/videos/:id/dispute`
+-Flags a video as disputed and locks it against retention deletion.
+-
+-**Request Body:**
+-```json
+-{
+-  "isLocked": true,
+-  "disputeStatus": "DISPUTE",
+-  "lockReason": "Customer reported missing item in parcel - Ticket #TK-9921"
+-}
+-```
+-
+----
+-
+-## 6. Dashboard Telemetry Endpoints
+-
+-### 6.1. `GET /api/v1/dashboard/stats`
+-Returns aggregated live metrics for the management console:
+-```json
+-{
+-  "success": true,
+-  "data": {
+-    "todayOrdersCount": 842,
+-    "todayVideosCount": 840,
+-    "todayStorageBytes": 9834823000,
+-    "cameras": {
+-      "online": 12,
+-      "offline": 0
+-    },
+-    "workers": {
+-      "online": 12,
+-      "offline": 0
+-    },
+-    "syncQueue": {
+-      "pending": 4,
+-      "syncing": 1,
+-      "failed": 0
+-    },
+-    "storageDisks": [
+-      {
+-        "type": "LOCAL_ARCHIVE",
+-        "path": "D:\\PackingVideo",
+-        "freePercentage": 68.2
+-      },
+-      {
+-        "type": "NAS_SHARE",
+-        "path": "\\\\SERVER\\PackingVideo",
+-        "freePercentage": 84.5
+-      }
+-    ]
+-  }
+-}
+-```

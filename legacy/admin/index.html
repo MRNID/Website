@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tenant Admin</title>
+    <link rel="stylesheet" href="/css/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="/image/logo.svg" alt="Brand logo" />
+          <div>
+            <strong id="brand-name">Tenant Portal</strong>
+            <small id="tenant-domain">Loading...</small>
+          </div>
+        </div>
+
+        <div class="user-box">
+          <span id="current-user">User</span>
+          <button id="logout-btn" class="logout-btn">Logout</button>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active">Dashboard</button>
+          <button class="nav-item">Orders</button>
+          <button class="nav-item">Customers</button>
+          <button class="nav-item">Reports</button>
+          <button class="nav-item">Settings</button>
+        </nav>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Multi-tenant admin</p>
+            <h1 id="tenant-title">Loading tenant...</h1>
+          </div>
+          <div class="tenant-picker-wrap">
+            <label for="tenant-select">Tenant</label>
+            <select id="tenant-select"></select>
+          </div>
+        </header>
+
+        <section class="stats-grid">
+          <article class="stat-card accent-blue">
+            <span>Total Orders</span>
+            <strong id="orders-total">0</strong>
+          </article>
+          <article class="stat-card accent-green">
+            <span>Revenue</span>
+            <strong id="revenue-total">0</strong>
+          </article>
+          <article class="stat-card accent-violet">
+            <span>Active Users</span>
+            <strong id="active-users">0</strong>
+          </article>
+          <article class="stat-card accent-orange">
+            <span>Conversion</span>
+            <strong id="conversion-rate">0%</strong>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <div class="panel">
+            <div class="panel-header">
+              <h3>Business Overview</h3>
+            </div>
+            <div id="chart" class="chart"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h3>Tenant Details</h3>
+            </div>
+            <ul class="detail-list" id="tenant-details"></ul>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/js/app.js"></script>
+  </body>
+</html>

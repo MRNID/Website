@@ -1,0 +1,23 @@
+{
+  "name": "tenant-admin-starter",
+  "version": "1.0.0",
+  "description": "Multi-tenant admin starter with modular architecture",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "multi-tenant",
+    "admin",
+    "express",
+    "modular",
+    "sqlserver"
+  ],
+  "author": "Copilot",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "mssql": "^10.0.2"
+  }
+}

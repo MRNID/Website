@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Login</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <style>
+      body {
+        margin: 0;
+        font-family: Inter, "Segoe UI", sans-serif;
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        color: white;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+      }
+
+      .login-box {
+        width: min(420px, calc(100% - 32px));
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 20px;
+        padding: 28px;
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+      }
+
+      .login-box h1 {
+        margin-top: 0;
+        margin-bottom: 8px;
+        font-size: 2rem;
+      }
+
+      .login-box p {
+        margin-top: 0;
+        margin-bottom: 22px;
+        color: #cbd5e1;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+
+      .field label {
+        font-size: 0.85rem;
+        color: #cbd5e1;
+      }
+
+      .field input {
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(15, 23, 42, 0.7);
+        color: white;
+      }
+
+      .submit-btn {
+        width: 100%;
+        border: none;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #2563eb, #7c3aed);
+        color: white;
+        padding: 12px 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .message {
+        margin-top: 14px;
+        min-height: 20px;
+        color: #fca5a5;
+        font-size: 0.9rem;
+      }
+
+      .demo {
+        margin-top: 18px;
+        color: #cbd5e1;
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-box">
+      <h1>Admin Login</h1>
+      <p>Đăng nhập vào hệ thống multi-tenant</p>
+
+      <form id="login-form">
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" value="admin.alpha" required />
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" value="Admin@123" required />
+        </div>
+
+        <button type="submit" class="submit-btn">Đăng nhập</button>
+        <div id="message" class="message"></div>
+      </form>
+
+      <div class="demo">
+        Demo account: <strong>admin.alpha</strong> / <strong>Admin@123</strong>
+      </div>
+    </div>
+
+    <script src="/js/login.js"></script>
+  </body>
+</html>

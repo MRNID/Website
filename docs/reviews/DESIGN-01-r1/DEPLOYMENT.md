@@ -1,0 +1,67 @@
+# PACKING VIDEO PROOF - DEPLOYMENT & DISASTER RECOVERY SPECIFICATION
+
+> **Document Version:** 2.0.0 (Updated to Baseline Alignment)  
+> **Target Environment:** On-Premises Warehouse LAN (Windows 10/11 Station PCs + Linux/Windows Main Server)
+
+---
+
+## 1. Network Topology (LAN First)
+
+```text
+[ Warehouse LAN Subnet: 192.168.1.0/24 ]
+├── 192.168.1.10: Main Server Node (PostgreSQL 16, Backend Fastify API, Nginx Static Host)
+├── 192.168.1.15: NAS / File Server (SMB Windows Share: \\SERVER\PackingVideo)
+├── 192.168.1.51..70: Station Packing PCs (Windows 11 + USB Barcode Gun + Video Worker Agent)
+└── 192.168.1.101..120: RTSP IP Cameras (PoE Industrial Switch, isolated CCTV VLAN)
+```
+
+### Communication Channels
+- **Web Browsers (Admin Web & User Web) $\rightarrow$ Main Server:** HTTPS (`port 443`) and WebSocket (`wss://192.168.1.10/ws/station`).
+- **Station Video Worker $\rightarrow$ Main Server:** Persistent outbound WebSocket (`wss://192.168.1.10:4000/ws/worker`) with `X-Worker-Token`.
+- **Station Video Worker $\rightarrow$ NAS:** Windows SMB Share protocol over port 445 (`\\SERVER\PackingVideo`).
+- **Station Video Worker $\rightarrow$ Camera:** RTSP TCP over port 554 (`rtsp://192.168.1.101:554/...`) or local DirectShow USB.
+
+---
+
+## 2. Windows Packing Station Setup
+
+### 2.1. Disk Volumes Preparation
+```powershell
+# Create storage directories on Station SSD
+New-Item -ItemType Directory -Force -Path "D:\PackingVideoTemp"
+New-Item -ItemType Directory -Force -Path "D:\PackingVideo"
+
+# Grant read/write permissions to Service User
+icacls "D:\PackingVideoTemp" /grant "Users:(OI)(CI)F" /T
+icacls "D:\PackingVideo" /grant "Users:(OI)(CI)F" /T
+```
+
+### 2.2. Video Worker as a Managed Windows Service (NSSM)
+```powershell
+# Install Video Worker Service
+nssm install PackingVideoWorker "C:\Program Files\nodejs\node.exe" "E:\Website\apps\video-worker\dist\index.js"
+nssm set PackingVideoWorker AppDirectory "E:\Website\apps\video-worker"
+nssm set PackingVideoWorker AppParameters "--config=C:\PackingProof\worker.config.json"
+nssm set PackingVideoWorker AppEnvironmentExtra "BACKEND_WS_URL=wss://192.168.1.10:4000/ws/worker WORKER_TOKEN=st_secret_token_pack01"
+nssm set PackingVideoWorker Start SERVICE_AUTO_START
+nssm set PackingVideoWorker AppThrottle 5000
+nssm start PackingVideoWorker
+```
+
+---
+
+## 3. Disaster Recovery & Backup Guarantees
+
+### 3.1. Target Service Level Objectives
+- **Recovery Point Objective (RPO):** $\le 1\text{ hour}$ for PostgreSQL database transactions. $0\text{ video loss}$ for locally finalized videos on SSD.
+- **Recovery Time Objective (RTO):** $\le 30\text{ minutes}$ for complete server node restoration.
+
+### 3.2. Automated Backup Strategy
+1. **Database Dump (Hourly):**
+   ```powershell
+   pg_dump -U postgres -h 192.168.1.10 -d packing_proof_db -F c -b -v -f "D:\Backups\db_$(Get-Date -Format 'yyyyMMdd_HHmmss').dump"
+   ```
+2. **Master Key Custody:**
+   The AES-256 master encryption key (`ENCRYPTION_MASTER_KEY_32B`) used to encrypt camera passwords and NAS credentials must be securely archived offline in cold storage (printed paper key in warehouse safe and encrypted password manager).
+3. **Storage Reconciliation Script:**
+   In the event of a database crash recovery, a reconciliation script sweeps `\\SERVER\PackingVideo` and local `D:\PackingVideo` to verify that all physical files match the restored database hashes and marks missing files as `UNSYNCHRONIZED_DISCREPANCY` for administrative review.

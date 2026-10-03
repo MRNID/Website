@@ -1,0 +1,99 @@
+diff --git a/docs/reviews/DESIGN-01-base/TODO.md b/docs/TODO.md
+index 27532ae..db93c58 100644
+--- a/docs/reviews/DESIGN-01-base/TODO.md
++++ b/docs/TODO.md
+@@ -1,8 +1,6 @@
+ # PACKING VIDEO PROOF - PROJECT ROADMAP & IMPLEMENTATION PHASES
+ 
+-> **Status Tracking:** Phase 1 Drafted — architecture review and contract alignment pending.  
+-> **Rule:** Do not proceed to application coding until Architecture is reviewed and approved.
+-
+-Điểm vào thiết kế: [BASELINE.md](BASELINE.md). Checklist tài liệu bên dưới chỉ xác nhận đã có bản nháp, không xác nhận kiến trúc đã được nghiệm thu. Thứ tự triển khai theo các điểm kiểm tra A–E trong baseline; cần kiểm chứng luồng quay trên một trạm trước khi mở rộng toàn bộ UI.
++> **Status Tracking:** Phase 1 Design Specification Refined (Aligned with Baseline & Multi-Module Contracts)  
++> **Rule:** Do not proceed to application coding until Architecture & Design Packet is reviewed and approved.
+ 
+ ---
+@@ -10,14 +8,14 @@
+ ## Phase Checklist
+ 
+-- [ ] **PHASE 1: System Architecture & Specifications — review pending**
+-  - [ ] Resolve the open contracts listed in `docs/BASELINE.md`
+-  - [ ] Align API, database, worker topology, state transitions and recovery rules
+-  - [ ] Record architecture review outcome before application implementation
+-  - [x] Create `docs/ARCHITECTURE.md` (System Topology, LAN-First, Storage Pipeline)
+-  - [x] Create `docs/DATABASE.md` (PostgreSQL DDL, Prisma Schema, Indexes, Relations)
+-  - [x] Create `docs/API_CONTRACT.md` (REST API specs, internal Worker RPC, envelopes)
++- [x] **PHASE 1: System Architecture & Baseline Specifications**
++  - [x] Create `docs/ARCHITECTURE.md` (System Topology, LAN-First, Ingestion Pipeline, Concurrency)
++  - [x] Create `docs/DATABASE.md` (PostgreSQL DDL, Prisma Schema, Conditional Indexes, Outbox, Concurrency)
++  - [x] Create `docs/API_CONTRACT.md` (REST API specs, 202/201 status codes, Idempotency, Worker WSS Protocol)
+   - [x] Create `docs/FOLDER_STRUCTURE.md` (Monorepo breakdown, apps & packages)
+   - [x] Create `docs/FLOW_PACKING.md` (USB Scanner logic, conflict resolution, recording lifecycle)
+-  - [x] Create `docs/TODO.md` (Roadmap & phase gatekeeper)
++  - [x] Create `docs/VIDEO_PROCESSING.md` (fMP4 ingestion, faststart remux, crash recovery)
++  - [x] Create `docs/SECURITY.md` (Resource-scoped RBAC, Worker Token Auth, Retention Locks)
++  - [x] Create `docs/DEPLOYMENT.md` (LAN Network Topology, Windows NSSM Service, RPO/RTO, Reconciliation)
++  - [x] Create `docs/reviews/DESIGN-01.md` (Formal Review Packet for Codex Audit)
+ 
+ - [ ] **PHASE 2: Repository Structure & Monorepo Initialization**
+@@ -29,13 +27,15 @@
+ - [ ] **PHASE 3: Database Layer & Migrations**
+   - [ ] Initialize Prisma in `packages/database`
+-  - [ ] Define PostgreSQL models: User, Role, Warehouse, Station, Camera, Order, PackingSession, Video, StorageConfig, SystemLog
++  - [ ] Define PostgreSQL models: Business, Warehouse, Station, Worker, Camera, Order, PackingSession, PackingCommand, Video, StorageConfig, SystemLog
++  - [ ] Configure conditional partial unique indexes in migrations
+   - [ ] Create Docker Compose for local PostgreSQL 16
+-  - [ ] Create database seed script with default roles (`SUPER_ADMIN`, `PACKING_USER`, etc.) and root admin
++  - [ ] Create database seed script with default roles (`SUPER_ADMIN`, `PACKING_USER`, etc.) and default warehouse
+ 
+ - [ ] **PHASE 4: Backend API - Authentication & Core Modules**
+-  - [ ] Fastify / NestJS setup with TypeScript
++  - [ ] Fastify setup with TypeScript and TypeBox/Zod validation
+   - [ ] Argon2 password hashing & JWT authentication (Access + Refresh tokens)
+-  - [ ] RBAC authorization guards
+-  - [ ] CRUD endpoints: Users, Roles, Warehouses, Stations, Cameras
++  - [ ] Resource-scoped authorization guards (Warehouse checking)
++  - [ ] Worker WSS Gateway (`/ws/worker`) with `X-Worker-Token` validation
++  - [ ] CRUD endpoints: Warehouses, Stations, Cameras, Users
+   - [ ] AES-256-GCM encryption service for sensitive credentials (RTSP, NAS)
+ 
+@@ -51,5 +51,5 @@
+   - [ ] Purpose-built UI for 1366x768 screens with high-contrast elements
+   - [ ] Global USB Barcode Scanner hook with debounce and keyboard auto-capture
+-  - [ ] Real-time station status indicators (Ready, Recording, Processing, Completed, Failed)
++  - [ ] Real-time station status indicators (Ready, Connecting, Recording, Processing, Completed, Failed)
+   - [ ] Anti-mistake confirmation modals (duplicate scan, scanning mid-record)
+   - [ ] Low-latency camera live stream viewport
+@@ -58,5 +58,5 @@
+ - [ ] **PHASE 7: Video Worker Daemon - Service Foundation**
+   - [ ] Standalone Node.js TypeScript daemon with local RPC HTTP listener (`localhost:4005`)
+-  - [ ] 10-second heartbeat mechanism reporting to Backend API
++  - [ ] WSS Client connecting to Backend Gateway with 10-second heartbeat
+   - [ ] Disk space monitoring & critical threshold alarm (Local Temp SSD)
+   - [ ] Windows DirectShow and RTSP stream probe utilities
+@@ -64,7 +64,7 @@
+ - [ ] **PHASE 8: FFmpeg Recording Pipeline**
+   - [ ] FFmpeg process spawning, supervisor, and pipe management
+-  - [ ] Record to `D:\PackingVideoTemp\session_{id}.tmp.mp4`
+-  - [ ] Graceful termination (`q` on stdin / SIGINT) with `-movflags +faststart`
+-  - [ ] Recovery on unexpected worker restart (orphaned temp file cleanup)
++  - [ ] Ingestion to `D:\PackingVideoTemp\session_{id}.fmp4` (Fragmented MP4)
++  - [ ] Graceful termination (`q` on stdin / SIGINT) and remux to standard MP4 with `-movflags +faststart`
++  - [ ] Startup recovery scan for orphaned `.fmp4` files
+   - [ ] Thumbnail generator (JPEG extraction at 1s)
+   - [ ] SHA-256 cryptographic stream calculation
+@@ -96,11 +96,11 @@
+ - [ ] **PHASE 13: Comprehensive Testing Suite**
+   - [ ] Barcode scanning & multi-scan conflict resolution tests
+-  - [ ] Start/Stop recording integration tests
++  - [ ] Start/Stop recording integration tests with 202/201 status validation
+   - [ ] SHA-256 hash validation tests
+   - [ ] NAS offline simulation test (verifying zero video loss)
+-  - [ ] RBAC permission tests
++  - [ ] RBAC permission & warehouse boundary tests
+ 
+ - [ ] **PHASE 14: Deployment & Production Packaging**
+-  - [ ] Windows Service installation scripts for Video Worker (`nssm` / `node-windows`)
++  - [ ] Windows Service installation scripts for Video Worker (`nssm`)
+   - [ ] Docker Compose for Backend API, PostgreSQL, and Nginx reverse proxy
+   - [ ] Production runbooks & administrator troubleshooting guide
