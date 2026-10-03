@@ -74,6 +74,11 @@ export class WorkerGateway {
 
       case 'RECORDING_MILESTONE':
         if (msg.event === 'FIRST_KEYFRAME') {
+          const currentSession = await DatabaseRepository.findSessionById(msg.sessionId);
+          if (currentSession && (currentSession.status === 'CANCELLING' || currentSession.status === 'CANCELLED' || currentSession.status === 'COMPLETED' || currentSession.status === 'FAILED')) {
+            console.log(`[WorkerGateway] Ignoring FIRST_KEYFRAME for session ${msg.sessionId} because status is ${currentSession.status}`);
+            break;
+          }
           console.log(`[WorkerGateway] Session ${msg.sessionId} entered RECORDING (PID: ${msg.pid})`);
           await DatabaseRepository.updateSessionStatus(msg.sessionId, 'RECORDING');
           StationGateway.broadcastSessionState(msg.sessionId, worker.stationId, 'RECORDING');

@@ -502,7 +502,7 @@ export class DatabaseRepository {
     const pool = await getDbPool();
     const res = await pool.request().query(`
       SELECT s.id, s.warehouse_id, s.name, s.code, s.computer_name, s.ip_address, s.status, s.last_heartbeat_at, s.created_at, s.updated_at,
-             c.id as camera_id, c.name as camera_name, c.type as camera_type, c.status as camera_status
+             c.id as camera_id, c.name as camera_name, c.type as camera_type, c.rtsp_url as camera_rtsp_url, c.status as camera_status
       FROM stations s
       LEFT JOIN cameras c ON s.id = c.station_id
       ORDER BY s.code ASC
@@ -522,6 +522,7 @@ export class DatabaseRepository {
         id: r.camera_id,
         name: r.camera_name,
         type: r.camera_type,
+        rtspUrl: r.camera_rtsp_url,
         status: r.camera_status
       } : null
     }));
@@ -750,5 +751,29 @@ export class DatabaseRepository {
     }
 
     return targetStationId;
+  }
+
+  static async updateCameraDirectly(id: string, data: {
+    name?: string;
+    type?: string;
+    rtspUrl?: string;
+    status?: string;
+  }): Promise<void> {
+    const pool = await getDbPool();
+    await pool.request()
+      .input('id', sql.VarChar(36), id)
+      .input('name', sql.NVarChar(100), data.name || null)
+      .input('type', sql.VarChar(50), data.type || 'RTSP')
+      .input('rtspUrl', sql.NVarChar(4000), data.rtspUrl || null)
+      .input('status', sql.VarChar(30), data.status || 'ONLINE')
+      .query(`
+        UPDATE cameras
+        SET name = COALESCE(@name, name),
+            type = COALESCE(@type, type),
+            rtsp_url = COALESCE(@rtspUrl, rtsp_url),
+            status = COALESCE(@status, status),
+            updated_at = GETDATE()
+        WHERE id = @id
+      `);
   }
 }

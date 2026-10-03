@@ -194,6 +194,26 @@ class AdminApiService {
       body: JSON.stringify(data)
     });
   }
+
+  async updateCamera(id: string, data: any): Promise<{ message: string }> {
+    return this.request(`/admin/cameras/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async testCameraConnection(data: { rtspUrl?: string; ipAddress?: string; port?: number }): Promise<{
+    host?: string;
+    port?: number;
+    reachable: boolean;
+    latencyMs: number;
+    message: string;
+  }> {
+    return this.request('/admin/cameras/test', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
 }
 
 export const adminApi = new AdminApiService();

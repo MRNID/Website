@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import * as crypto from 'node:crypto';
+import * as net from 'node:net';
 import { DatabaseRepository } from '@packing-proof/database';
 import { validateAndCleanBarcode, buildCollisionProofFilename } from '@packing-proof/shared-utils';
 import { authenticateUser, checkWarehouseAccess } from '../auth/auth.middleware.js';
@@ -380,6 +381,122 @@ export async function packingRoutes(app: FastifyInstance) {
     return reply.status(200).send({
       success: true,
       data: { stationId, message: 'Station updated successfully' }
+    });
+  });
+
+  // 15. Update Camera Directly
+  app.put('/api/v1/admin/cameras/:id', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'Only admins can modify cameras' } });
+    }
+    const { id } = request.params as { id: string };
+    await DatabaseRepository.updateCameraDirectly(id, request.body as any);
+    return reply.status(200).send({
+      success: true,
+      data: { message: 'Cấu hình Camera cập nhật thành công' }
+    });
+  });
+
+  // 16. Test RTSP Camera / LAN Connectivity Probe
+  app.post('/api/v1/admin/cameras/test', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { rtspUrl, ipAddress, port: customPort } = request.body as any;
+
+    let targetHost = ipAddress;
+    let targetPort = customPort || 554;
+
+    if (rtspUrl) {
+      if (rtspUrl.toLowerCase().includes('mock') || rtspUrl.toLowerCase().includes('test-pattern') || rtspUrl.toLowerCase().includes('webcam')) {
+        return reply.status(200).send({
+          success: true,
+          data: {
+            reachable: true,
+            latencyMs: 1,
+            message: 'Nguồn video nội bộ / Webcam / Giả lập hợp lệ và sẵn sàng hoạt động'
+          }
+        });
+      }
+
+      // Parse RTSP URL
+      try {
+        const parsed = new URL(rtspUrl);
+        targetHost = parsed.hostname;
+        targetPort = parsed.port ? parseInt(parsed.port, 10) : 554;
+      } catch {
+        const match = rtspUrl.match(/@([^:/\s]+)(?::(\d+))?/);
+        if (match) {
+          targetHost = match[1];
+          targetPort = match[2] ? parseInt(match[2], 10) : 554;
+        } else {
+          const directMatch = rtspUrl.match(/rtsp:\/\/([^:/\s]+)(?::(\d+))?/);
+          if (directMatch) {
+            targetHost = directMatch[1];
+            targetPort = directMatch[2] ? parseInt(directMatch[2], 10) : 554;
+          }
+        }
+      }
+    }
+
+    if (!targetHost) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_CAMERA_ADDRESS', message: 'Vui lòng cung cấp URL RTSP hoặc IP Camera hợp lệ' }
+      });
+    }
+
+    // Perform TCP socket probe on RTSP port (typically 554)
+    const startTime = Date.now();
+    const probeResult = await new Promise<{ reachable: boolean; latencyMs: number; error?: string }>((resolve) => {
+      const socket = new net.Socket();
+      let finished = false;
+
+      const timer = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          socket.destroy();
+          resolve({
+            reachable: false,
+            latencyMs: Date.now() - startTime,
+            error: `Timeout: Camera không phản hồi cổng ${targetPort} sau 2.5 giây`
+          });
+        }
+      }, 2500);
+
+      socket.connect(targetPort, targetHost, () => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          const latencyMs = Date.now() - startTime;
+          socket.end();
+          resolve({ reachable: true, latencyMs });
+        }
+      });
+
+      socket.on('error', (err) => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          socket.destroy();
+          resolve({
+            reachable: false,
+            latencyMs: Date.now() - startTime,
+            error: `Lỗi kết nối: ${err.message}`
+          });
+        }
+      });
+    });
+
+    return reply.status(200).send({
+      success: true,
+      data: {
+        host: targetHost,
+        port: targetPort,
+        reachable: probeResult.reachable,
+        latencyMs: probeResult.latencyMs,
+        message: probeResult.reachable
+          ? `Kết nối Camera thành công (Ping ${probeResult.latencyMs}ms, cổng ${targetPort} mở)`
+          : `Không kết nối được Camera: ${probeResult.error}`
+      }
     });
   });
 }
