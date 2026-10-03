@@ -333,4 +333,53 @@ export async function packingRoutes(app: FastifyInstance) {
       data: stats
     });
   });
+
+  // 11. Get System Settings & Storage Configs
+  app.get('/api/v1/admin/settings', { preHandler: [authenticateUser] }, async (_request, reply) => {
+    const data = await DatabaseRepository.getSystemSettings();
+    return reply.status(200).send({
+      success: true,
+      data
+    });
+  });
+
+  // 12. Update System Settings & Storage Configs
+  app.put('/api/v1/admin/settings', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'Only admins can modify system settings' } });
+    }
+    await DatabaseRepository.updateSystemSettings(request.body as any);
+    return reply.status(200).send({
+      success: true,
+      data: { message: 'Settings updated successfully' }
+    });
+  });
+
+  // 13. Create Station & Camera
+  app.post('/api/v1/admin/stations', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'Only admins can create stations' } });
+    }
+    const stationId = await DatabaseRepository.upsertStationWithCamera(request.body as any);
+    return reply.status(201).send({
+      success: true,
+      data: { stationId, message: 'Station created successfully' }
+    });
+  });
+
+  // 14. Update Station & Camera
+  app.put('/api/v1/admin/stations/:id', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'Only admins can modify stations' } });
+    }
+    const { id } = request.params as { id: string };
+    const stationId = await DatabaseRepository.upsertStationWithCamera({ ...(request.body as any), stationId: id });
+    return reply.status(200).send({
+      success: true,
+      data: { stationId, message: 'Station updated successfully' }
+    });
+  });
 }

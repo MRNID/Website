@@ -169,6 +169,31 @@ class AdminApiService {
       body: JSON.stringify({ reason })
     });
   }
+
+  async getSettings(): Promise<{ storageConfigs: any[]; settings: Record<string, string> }> {
+    return this.request('/admin/settings');
+  }
+
+  async updateSettings(data: { storageConfigs?: any[]; settings?: Record<string, string> }): Promise<void> {
+    return this.request('/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async createStation(data: any): Promise<{ stationId: string }> {
+    return this.request('/admin/stations', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async updateStation(id: string, data: any): Promise<{ stationId: string }> {
+    return this.request(`/admin/stations/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
 }
 
 export const adminApi = new AdminApiService();

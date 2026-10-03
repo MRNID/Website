@@ -3,6 +3,7 @@ import { Navbar, AdminTab } from './components/Navbar';
 import { DashboardPage } from './pages/DashboardPage';
 import { VideoSearchPage } from './pages/VideoSearchPage';
 import { StationsPage } from './pages/StationsPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { LoginPage } from './pages/LoginPage';
 import { adminApi, AdminUser } from './services/api';
 
@@ -62,6 +63,7 @@ export default function App() {
         )}
         {currentTab === 'videos' && <VideoSearchPage />}
         {currentTab === 'stations' && <StationsPage />}
+        {currentTab === 'settings' && <SettingsPage />}
       </main>
     </div>
   );

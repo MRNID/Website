@@ -596,4 +596,159 @@ export class DatabaseRepository {
       onlineStations: stationsRes.recordset[0]?.online_stations || 0
     };
   }
+
+  static async getSystemSettings(): Promise<{ storageConfigs: any[]; settings: Record<string, string> }> {
+    const pool = await getDbPool();
+    const storageRes = await pool.request().query(`
+      SELECT id, warehouse_id, storage_type, path, retention_days, local_retention_days, enabled, is_default
+      FROM storage_configs
+      ORDER BY storage_type ASC
+    `);
+
+    const settingsRes = await pool.request().query(`
+      SELECT [key], [value], [description]
+      FROM system_settings
+    `);
+
+    const settingsMap: Record<string, string> = {};
+    for (const row of settingsRes.recordset) {
+      settingsMap[row.key] = row.value;
+    }
+
+    return {
+      storageConfigs: storageRes.recordset,
+      settings: settingsMap
+    };
+  }
+
+  static async updateSystemSettings(data: {
+    storageConfigs?: Array<{ id: string; path: string; retention_days: number; local_retention_days: number; enabled: boolean }>;
+    settings?: Record<string, string>;
+  }): Promise<void> {
+    const pool = await getDbPool();
+    if (data.storageConfigs) {
+      for (const sc of data.storageConfigs) {
+        await pool.request()
+          .input('id', sql.VarChar(36), sc.id)
+          .input('path', sql.NVarChar(4000), sc.path)
+          .input('retention_days', sql.Int, sc.retention_days)
+          .input('local_retention_days', sql.Int, sc.local_retention_days)
+          .input('enabled', sql.Bit, sc.enabled ? 1 : 0)
+          .query(`
+            UPDATE storage_configs
+            SET path = @path,
+                retention_days = @retention_days,
+                local_retention_days = @local_retention_days,
+                enabled = @enabled,
+                updated_at = GETDATE()
+            WHERE id = @id
+          `);
+      }
+    }
+
+    if (data.settings) {
+      for (const [key, value] of Object.entries(data.settings)) {
+        await pool.request()
+          .input('key', sql.VarChar(100), key)
+          .input('value', sql.NVarChar(4000), String(value))
+          .query(`
+            IF EXISTS (SELECT 1 FROM system_settings WHERE [key] = @key)
+              UPDATE system_settings SET [value] = @value, updated_at = GETDATE() WHERE [key] = @key
+            ELSE
+              INSERT INTO system_settings ([key], [value]) VALUES (@key, @value)
+          `);
+      }
+    }
+  }
+
+  static async upsertStationWithCamera(data: {
+    stationId?: string;
+    warehouseId?: string;
+    name: string;
+    code: string;
+    computerName?: string;
+    ipAddress?: string;
+    cameraName?: string;
+    cameraType?: string;
+    rtspUrl?: string;
+  }): Promise<string> {
+    const pool = await getDbPool();
+    let targetStationId = data.stationId;
+
+    if (targetStationId) {
+      await pool.request()
+        .input('id', sql.VarChar(36), targetStationId)
+        .input('name', sql.NVarChar(100), data.name)
+        .input('code', sql.VarChar(50), data.code)
+        .input('computerName', sql.VarChar(100), data.computerName || null)
+        .input('ipAddress', sql.VarChar(50), data.ipAddress || null)
+        .query(`
+          UPDATE stations
+          SET name = @name, code = @code, computer_name = @computerName, ip_address = @ipAddress, updated_at = GETDATE()
+          WHERE id = @id
+        `);
+    } else {
+      const crypto = await import('node:crypto');
+      targetStationId = crypto.randomUUID();
+      const whId = data.warehouseId || (await pool.request().query('SELECT TOP 1 id FROM warehouses')).recordset[0]?.id;
+      await pool.request()
+        .input('id', sql.VarChar(36), targetStationId)
+        .input('warehouseId', sql.VarChar(36), whId)
+        .input('name', sql.NVarChar(100), data.name)
+        .input('code', sql.VarChar(50), data.code)
+        .input('computerName', sql.VarChar(100), data.computerName || null)
+        .input('ipAddress', sql.VarChar(50), data.ipAddress || null)
+        .query(`
+          INSERT INTO stations (id, warehouse_id, name, code, computer_name, ip_address, status)
+          VALUES (@id, @warehouseId, @name, @code, @computerName, @ipAddress, 'ONLINE')
+        `);
+
+      // Create default worker
+      const workerId = crypto.randomUUID();
+      const defaultTokenHash = 'ede5a7dda3c757ae4289038733435dd54213c0078dc4ce11ba599675a78b77f9';
+      await pool.request()
+        .input('id', sql.VarChar(36), workerId)
+        .input('stationId', sql.VarChar(36), targetStationId)
+        .input('tokenHash', sql.VarChar(255), defaultTokenHash)
+        .query(`
+          INSERT INTO workers (id, station_id, token_hash, status)
+          VALUES (@id, @stationId, @tokenHash, 'ONLINE')
+        `);
+    }
+
+    // Upsert camera
+    if (data.cameraName || data.rtspUrl) {
+      const existingCam = await pool.request()
+        .input('stationId', sql.VarChar(36), targetStationId)
+        .query('SELECT id FROM cameras WHERE station_id = @stationId');
+
+      if (existingCam.recordset.length > 0) {
+        await pool.request()
+          .input('stationId', sql.VarChar(36), targetStationId)
+          .input('name', sql.NVarChar(100), data.cameraName || 'CAM_' + data.code)
+          .input('type', sql.VarChar(50), data.cameraType || 'RTSP')
+          .input('rtspUrl', sql.NVarChar(4000), data.rtspUrl || null)
+          .query(`
+            UPDATE cameras
+            SET name = @name, type = @type, rtsp_url = @rtspUrl, updated_at = GETDATE()
+            WHERE station_id = @stationId
+          `);
+      } else {
+        const crypto = await import('node:crypto');
+        const camId = crypto.randomUUID();
+        await pool.request()
+          .input('id', sql.VarChar(36), camId)
+          .input('stationId', sql.VarChar(36), targetStationId)
+          .input('name', sql.NVarChar(100), data.cameraName || 'CAM_' + data.code)
+          .input('type', sql.VarChar(50), data.cameraType || 'RTSP')
+          .input('rtspUrl', sql.NVarChar(4000), data.rtspUrl || null)
+          .query(`
+            INSERT INTO cameras (id, station_id, name, type, rtsp_url, status)
+            VALUES (@id, @stationId, @name, @type, @rtspUrl, 'ONLINE')
+          `);
+      }
+    }
+
+    return targetStationId;
+  }
 }
