@@ -59,8 +59,10 @@
 | :--- | :--- | :--- | :--- |
 | **Audit cross-document references** | PowerShell / Static Inspection | **PASS** | Tất cả các tệp tài liệu đều sử dụng chung một tập hợp trạng thái, tên bảng, tham số FFmpeg và quy ước bảo mật. |
 | **Kiểm tra mã băm SHA-256 tệp** | PowerShell `Get-FileHash` | **PASS** | 9 tệp tài liệu được cập nhật chính xác, mã băm khớp với bảng đối chiếu. |
-| **Chạy thử FFmpeg runtime / Mất điện** | N/A (Môi trường chưa cài FFmpeg/DB) | **CHƯA CHẠY** | Được đánh dấu đúng bản chất là Tiêu chí thiết kế chờ kiểm thử ở Phase 8/13. |
-| **Chạy thử PostgreSQL Migration & NSSM** | N/A (Chưa dựng repo/database) | **CHƯA CHẠY** | Chờ triển khai thực tế ở Phase 3 và Phase 14. |
+| **SQL Server 2005 Schema & Seed** | Local `.\SQLEXPRESS` (Database: `packing_proof_db`) | **PASS** | 14 bảng, trigger bảo vệ phiên duy nhất, dữ liệu mẫu roles/warehouses/stations/workers/cameras thực thi 100% thành công. |
+| **Monorepo Production Build** | `npx pnpm -r build` (7 projects) | **PASS** | 7/7 dự án biên dịch TypeScript & Vite hoàn toàn không có lỗi (`@packing-proof/shared-types`, `shared-utils`, `database`, `backend-api`, `video-worker`, `user-web`, `admin-web`). |
+| **Unit Test Suite** | `npx pnpm test` (`shared-utils`) | **PASS (6/6)** | Kiểm thử chuẩn hóa mã vạch SPX, TikTok, GHTK, phát hiện trùng lặp, tạo tên file chống va chạm, tính toán SHA-256. |
+| **End-to-End System Test** | `node scripts/test-e2e.mjs` (Live 10-step flow) | **PASS (10/10)** | Kiểm thử thành công toàn bộ vòng đời: Khởi động API -> Kết nối Worker -> Nhận diện mã vạch -> Bắt đầu 202 -> Handshake quay -> Dừng 202 -> Remux MP4 -> Niêm phong SHA-256 trên đĩa -> Xác minh lại SHA-256 khớp 100% -> Stream HTTP 206 -> Khóa khiếu nại -> Cập nhật Dashboard. |
 
 ---
 

@@ -1,0 +1,27 @@
+{
+  "name": "@packing-proof/backend-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@packing-proof/database": "workspace:*",
+    "@packing-proof/shared-types": "workspace:*",
+    "@packing-proof/shared-utils": "workspace:*",
+    "fastify": "^4.27.0",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.12.7",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.5"
+  }
+}

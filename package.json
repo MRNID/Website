@@ -1,23 +1,23 @@
 {
-  "name": "tenant-admin-starter",
+  "name": "packing-video-proof",
   "version": "1.0.0",
-  "description": "Multi-tenant admin starter with modular architecture",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
-  },
-  "keywords": [
-    "multi-tenant",
-    "admin",
-    "express",
-    "modular",
-    "sqlserver"
+  "private": true,
+  "description": "Standalone Packing & Return Proof Video System for Fulfillment Warehouses",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
   ],
-  "author": "Copilot",
-  "license": "MIT",
-  "dependencies": {
-    "express": "^4.19.2",
-    "mssql": "^10.0.2"
-  }
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "node --test packages/shared-utils/dist/barcode-validator.test.js",
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "start:backend": "pnpm --filter @packing-proof/backend-api start",
+    "start:worker": "pnpm --filter @packing-proof/video-worker start",
+    "start:user": "pnpm --filter @packing-proof/user-web dev",
+    "start:admin": "pnpm --filter @packing-proof/admin-web dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "packageManager": "pnpm@9.1.0"
 }

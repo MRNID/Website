@@ -1,0 +1,23 @@
+{
+  "name": "@packing-proof/video-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "dev": "tsc -w & node --watch dist/index.js"
+  },
+  "dependencies": {
+    "@packing-proof/shared-types": "workspace:*",
+    "@packing-proof/shared-utils": "workspace:*",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.5"
+  }
+}

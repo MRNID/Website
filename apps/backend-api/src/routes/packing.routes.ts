@@ -1,0 +1,336 @@
+import { FastifyInstance } from 'fastify';
+import * as crypto from 'node:crypto';
+import { DatabaseRepository } from '@packing-proof/database';
+import { validateAndCleanBarcode, buildCollisionProofFilename } from '@packing-proof/shared-utils';
+import { authenticateUser, checkWarehouseAccess } from '../auth/auth.middleware.js';
+import { WorkerGateway } from '../websocket/worker-gateway.js';
+import { StationGateway } from '../websocket/station-gateway.js';
+
+export async function packingRoutes(app: FastifyInstance) {
+  // 1. Validate Barcode
+  app.post('/api/v1/packing/validate-barcode', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { trackingCode, stationId } = request.body as any;
+
+    if (!trackingCode || !stationId) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'trackingCode and stationId are required' }
+      });
+    }
+
+    const match = validateAndCleanBarcode(trackingCode);
+    if (!match.isValid) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_BARCODE_FORMAT', message: 'Tracking code does not match supported carrier patterns' }
+      });
+    }
+
+    const user = request.user!;
+    const duplicateCheck = await DatabaseRepository.checkDuplicateTracking(user.warehouseId || '', match.cleanedCode);
+
+    return reply.status(200).send({
+      success: true,
+      data: {
+        isValid: true,
+        platform: match.platform,
+        cleanedCode: match.cleanedCode,
+        isDuplicate: duplicateCheck.isDuplicate,
+        previousPackedAt: duplicateCheck.packedAt || null
+      }
+    });
+  });
+
+  // 2. Start Packing (Returns 202 Accepted, status: WAITING)
+  app.post('/api/v1/packing/start', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { stationId, trackingCode, orderCode, platform } = request.body as any;
+    const idempotencyKey = (request.headers['idempotency-key'] as string) || crypto.randomUUID();
+    const user = request.user!;
+
+    // Validate station
+    const station = await DatabaseRepository.findStationByCode('PACK01'); // or find by id
+    const targetStationId = stationId || station?.id;
+    if (!targetStationId) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'STATION_NOT_FOUND', message: 'Specified packing station does not exist' }
+      });
+    }
+
+    // Verify warehouse scoping
+    if (user.warehouseId && station && !checkWarehouseAccess(user, station.warehouseId)) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'WAREHOUSE_ACCESS_DENIED', message: 'You are not assigned to this warehouse' }
+      });
+    }
+
+    // Check for active session
+    const active = await DatabaseRepository.checkActiveSession(targetStationId);
+    if (active) {
+      return reply.status(409).send({
+        success: false,
+        error: {
+          code: 'ACTIVE_SESSION_EXISTS',
+          message: 'Station already has an active or pending recording session',
+          activeSessionId: active.id
+        }
+      });
+    }
+
+    // Check worker connectivity
+    if (!WorkerGateway.isWorkerConnected(targetStationId)) {
+      return reply.status(503).send({
+        success: false,
+        error: { code: 'WORKER_OFFLINE', message: 'Station video worker daemon is currently offline' }
+      });
+    }
+
+    const camera = await DatabaseRepository.findCameraByStationId(targetStationId);
+    if (!camera) {
+      return reply.status(500).send({
+        success: false,
+        error: { code: 'CAMERA_NOT_CONFIGURED', message: 'No camera configured for this station' }
+      });
+    }
+
+    const sessionId = crypto.randomUUID();
+    const workerEpoch = WorkerGateway.getWorkerEpoch(targetStationId) || undefined;
+    const cleanedCode = trackingCode.trim().toUpperCase();
+    const resolvedOrderCode = orderCode || cleanedCode;
+    const resolvedPlatform = platform || 'SPX';
+
+    // 1. Transactional Outbox + Session creation
+    await DatabaseRepository.createPackingSessionTx({
+      sessionId,
+      warehouseId: station?.warehouseId || user.warehouseId || '',
+      stationId: targetStationId,
+      cameraId: camera.id,
+      userId: user.sub,
+      trackingCode: cleanedCode,
+      orderCode: resolvedOrderCode,
+      platform: resolvedPlatform,
+      idempotencyKey,
+      workerEpoch
+    });
+
+    // 2. Dispatch command to worker over WebSocket
+    const filePattern = buildCollisionProofFilename(cleanedCode, station?.code || 'PACK01', sessionId);
+    WorkerGateway.dispatchStartRecord(targetStationId, {
+      sessionId,
+      workerEpoch: workerEpoch || '',
+      trackingCode: cleanedCode,
+      stationCode: station?.code || 'PACK01',
+      camera: {
+        type: camera.type,
+        url: camera.rtspUrl || undefined
+      },
+      outputTempPattern: filePattern
+    });
+
+    // 3. Start 15-second handshake watchdog timer (D01-01)
+    setTimeout(async () => {
+      try {
+        const session = await DatabaseRepository.findSessionById(sessionId);
+        if (session && session.status === 'WAITING') {
+          console.warn(`[Watchdog] Session ${sessionId} timed out in WAITING. Setting INDETERMINATE_TIMEOUT.`);
+          await DatabaseRepository.updateSessionStatus(sessionId, 'INDETERMINATE_TIMEOUT', 'Camera initial stream handshake timeout');
+          StationGateway.broadcastSessionState(sessionId, targetStationId, 'INDETERMINATE_TIMEOUT');
+        }
+      } catch (err) {
+        console.error('[Watchdog] Error checking session status:', err);
+      }
+    }, 15000);
+
+    return reply.status(202).send({
+      success: true,
+      data: {
+        sessionId,
+        operationId: `op_start_${sessionId.slice(0, 8)}`,
+        status: 'WAITING',
+        stationId: targetStationId,
+        trackingCode: cleanedCode
+      }
+    });
+  });
+
+  // 3. Stop Packing (Returns 202 Accepted, status: PROCESSING)
+  app.post('/api/v1/packing/stop', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { sessionId } = request.body as any;
+
+    if (!sessionId) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'sessionId is required' }
+      });
+    }
+
+    const session = await DatabaseRepository.findSessionById(sessionId);
+    if (!session) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'SESSION_NOT_FOUND', message: 'Packing session not found' }
+      });
+    }
+
+    if (session.status !== 'RECORDING') {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_SESSION_STATE', message: `Cannot stop session in status ${session.status}` }
+      });
+    }
+
+    await DatabaseRepository.updateSessionStatus(sessionId, 'PROCESSING');
+    WorkerGateway.dispatchStopRecord(session.station_id, { sessionId });
+    StationGateway.broadcastSessionState(sessionId, session.station_id, 'PROCESSING');
+
+    return reply.status(202).send({
+      success: true,
+      data: {
+        sessionId,
+        operationId: `op_stop_${sessionId.slice(0, 8)}`,
+        status: 'PROCESSING'
+      }
+    });
+  });
+
+  // 4. Cancel Packing (Returns 202 Accepted, status: CANCELLING)
+  app.post('/api/v1/packing/cancel', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { sessionId, reason } = request.body as any;
+
+    if (!sessionId) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'sessionId is required' }
+      });
+    }
+
+    const session = await DatabaseRepository.findSessionById(sessionId);
+    if (!session) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'SESSION_NOT_FOUND', message: 'Packing session not found' }
+      });
+    }
+
+    await DatabaseRepository.updateSessionStatus(sessionId, 'CANCELLING', reason);
+    WorkerGateway.dispatchCancelRecord(session.station_id, { sessionId, reason });
+
+    return reply.status(202).send({
+      success: true,
+      data: {
+        sessionId,
+        operationId: `op_cancel_${sessionId.slice(0, 8)}`,
+        status: 'CANCELLING'
+      }
+    });
+  });
+
+  // 5. Query Session
+  app.get('/api/v1/packing/sessions/:id', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const session = await DatabaseRepository.findSessionById(id);
+    if (!session) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'SESSION_NOT_FOUND', message: 'Packing session not found' }
+      });
+    }
+
+    return reply.status(200).send({
+      success: true,
+      data: {
+        sessionId: session.id,
+        trackingCode: session.tracking_code,
+        orderCode: session.order_code,
+        status: session.status,
+        hasPartialVideo: Boolean(session.has_partial_video),
+        startTime: session.start_time ? session.start_time.toISOString() : null,
+        endTime: session.end_time ? session.end_time.toISOString() : null,
+        video: session.video_id ? {
+          id: session.video_id,
+          filename: session.filename,
+          duration: Number(session.duration),
+          fileSize: Number(session.file_size),
+          sha256: session.sha256,
+          syncStatus: session.sync_status
+        } : null
+      }
+    });
+  });
+
+  // 6. Station Active Snapshot
+  app.get('/api/v1/packing/stations/:id/active', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const active = await DatabaseRepository.checkActiveSession(id);
+    const isOnline = WorkerGateway.isWorkerConnected(id);
+
+    return reply.status(200).send({
+      success: true,
+      data: {
+        stationId: id,
+        stationStatus: isOnline ? (active ? 'BUSY' : 'ONLINE') : 'OFFLINE',
+        activeSession: active ? {
+          sessionId: active.id,
+          status: active.status,
+          startTime: active.startTime,
+          elapsedSeconds: Math.floor((Date.now() - new Date(active.startTime).getTime()) / 1000)
+        } : null,
+        worker: {
+          status: isOnline ? 'ONLINE' : 'OFFLINE'
+        }
+      }
+    });
+  });
+
+  // 7. Force Unlock Station
+  app.post('/api/v1/stations/:id/force-unlock', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { reason } = request.body as any;
+    const user = request.user!;
+
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'WAREHOUSE_MANAGER' && user.role !== 'ADMIN') {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Only warehouse managers or admins can force-unlock a station' }
+      });
+    }
+
+    await DatabaseRepository.forceUnlockStation(id, user.sub, reason || 'Supervisor manual unlock');
+    StationGateway.broadcastSessionState('NONE', id, 'UNLOCKED');
+
+    return reply.status(200).send({
+      success: true,
+      data: { message: `Station ${id} force-unlocked successfully` }
+    });
+  });
+
+  // 8. List all stations
+  app.get('/api/v1/stations', { preHandler: [authenticateUser] }, async (_request, reply) => {
+    const stations = await DatabaseRepository.getAllStations();
+    return reply.status(200).send({
+      success: true,
+      data: stations
+    });
+  });
+
+  // 9. Station recent sessions (today's history)
+  app.get('/api/v1/packing/stations/:id/recent', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const limit = Number((request.query as any)?.limit) || 10;
+    const sessions = await DatabaseRepository.getRecentSessions(id, limit);
+    return reply.status(200).send({
+      success: true,
+      data: sessions
+    });
+  });
+
+  // 10. Admin Dashboard Overview
+  app.get('/api/v1/admin/dashboard', { preHandler: [authenticateUser] }, async (_request, reply) => {
+    const stats = await DatabaseRepository.getDashboardStats();
+    return reply.status(200).send({
+      success: true,
+      data: stats
+    });
+  });
+}

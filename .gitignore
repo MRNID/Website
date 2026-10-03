@@ -1,6 +1,51 @@
+# Dependency directories
 node_modules/
+.pnpm-store/
+
+# Build artifacts
+dist/
+build/
+.turbo/
+
+# Environment variables
 .env
-.DS_Store
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
 npm-debug.log*
-uploads/*
-!uploads/.gitkeep
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Video and Media Temp Buffers
+*.tmp.mp4
+*.fmp4
+*.tmp
+*.raw
+D:\PackingVideoTemp\*
+D:\PackingVideo\*
+
+# SQLite Local Journals (Worker)
+.journal/
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+
+# IDE & Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
