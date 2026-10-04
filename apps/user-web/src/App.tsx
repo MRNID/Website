@@ -54,6 +54,8 @@ export default function App() {
   const [autoScanEnabled, setAutoScanEnabled] = useState(true);
 
   const timerRef = useRef<any>(null);
+  const activeTrackingCodeRef = useRef<string>('');
+  const ignoredAutoScanCodesRef = useRef<Map<string, number>>(new Map());
 
   // Load pending orders queue
   const loadOrdersQueue = useCallback(async () => {
@@ -142,6 +144,10 @@ export default function App() {
         sounds.playRecordingStarted();
       } else if (newState === 'COMPLETED') {
         sounds.playPackingCompleted();
+        // Tạm hoãn auto-scan mã này trong 60 giây để tránh camera quét lại kiện vừa đóng xong
+        if (activeTrackingCodeRef.current) {
+          ignoredAutoScanCodesRef.current.set(activeTrackingCodeRef.current.toUpperCase(), Date.now() + 60000);
+        }
         loadRecentHistory().then(async () => {
           if (sessionId) {
             try {
@@ -206,6 +212,8 @@ export default function App() {
       const validation = await api.validateBarcode(cleanCode, currentStation.id);
       if (validation.isDuplicate) {
         sounds.playErrorBuzz();
+        // Tạm hoãn auto-scan mã này trong 60s để camera không spam mở lại modal liên tục
+        ignoredAutoScanCodesRef.current.set(cleanCode, Date.now() + 60000);
         setDuplicateInfo({
           trackingCode: cleanCode,
           previousPackedAt: validation.previousPackedAt
@@ -226,6 +234,7 @@ export default function App() {
       // Initiate session
       sounds.playScanSuccess();
       setTrackingCode(cleanCode);
+      activeTrackingCodeRef.current = cleanCode;
       setTrackingInput(cleanCode);
       setSessionState('WAITING');
       setElapsedSeconds(0);
@@ -403,6 +412,15 @@ export default function App() {
           handleStopPacking();
         }
       } else if (e.key === 'Escape') {
+        if (isDuplicateModalOpen) {
+          e.preventDefault();
+          if (duplicateInfo?.trackingCode) {
+            ignoredAutoScanCodesRef.current.set(duplicateInfo.trackingCode.toUpperCase(), Date.now() + 60000);
+          }
+          setIsDuplicateModalOpen(false);
+          setDuplicateInfo(null);
+          return;
+        }
         if (sessionState === 'RECORDING' || sessionState === 'WAITING') {
           e.preventDefault();
           handleCancelPacking();
@@ -423,7 +441,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyShortcuts);
     return () => window.removeEventListener('keydown', handleKeyShortcuts);
-  }, [sessionState, trackingInput, sessionId, pendingOrders]);
+  }, [sessionState, trackingInput, sessionId, pendingOrders, isDuplicateModalOpen, duplicateInfo]);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 select-none overflow-hidden font-sans">
@@ -469,6 +487,19 @@ export default function App() {
                 autoScanEnabled={autoScanEnabled}
                 onToggleAutoScan={() => setAutoScanEnabled((prev) => !prev)}
                 onAutoScanBarcode={(scannedCode) => {
+                  // Không nhận diện mã mới khi đang mở modal cảnh báo/đăng nhập/mở khóa
+                  if (isDuplicateModalOpen || isLoginOpen || isForceUnlockOpen) {
+                    return;
+                  }
+
+                  const clean = scannedCode.trim().toUpperCase();
+
+                  // Kiểm tra xem mã này có đang bị tạm hoãn không (vừa đóng xong hoặc người dùng bấm Hủy)
+                  const snoozeUntil = ignoredAutoScanCodesRef.current.get(clean);
+                  if (snoozeUntil && Date.now() < snoozeUntil) {
+                    return;
+                  }
+
                   if (sessionState === 'RECORDING') {
                     console.log('[App] Auto-scan detected SKU during recording:', scannedCode);
                     handleScanProductSku(scannedCode);
@@ -545,19 +576,24 @@ export default function App() {
         trackingCode={duplicateInfo?.trackingCode || ''}
         previousPackedAt={duplicateInfo?.previousPackedAt}
         onCancel={() => {
+          if (duplicateInfo?.trackingCode) {
+            ignoredAutoScanCodesRef.current.set(duplicateInfo.trackingCode.toUpperCase(), Date.now() + 60000);
+          }
           setIsDuplicateModalOpen(false);
           setDuplicateInfo(null);
         }}
         onProceed={async () => {
           if (!duplicateInfo || !currentStation) return;
+          const code = duplicateInfo.trackingCode;
           setIsDuplicateModalOpen(false);
-          setTrackingCode(duplicateInfo.trackingCode);
+          setTrackingCode(code);
+          activeTrackingCodeRef.current = code;
           setSessionState('WAITING');
           setElapsedSeconds(0);
           try {
             const res = await api.startPacking({
               stationId: currentStation.id,
-              trackingCode: duplicateInfo.trackingCode,
+              trackingCode: code,
               platform: 'SPX'
             });
             setSessionId(res.sessionId);
