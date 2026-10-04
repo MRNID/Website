@@ -361,6 +361,7 @@ export default function App() {
           <div className="col-span-7 flex flex-col space-y-3.5 h-full overflow-y-auto pr-1">
             <div className="h-[310px] shrink-0">
               <CameraViewport
+                stationId={currentStation?.id}
                 stationCode={currentStation?.code || 'PACK01'}
                 cameraName={currentStation?.camera?.name || 'CAM_PACK01'}
                 state={sessionState}

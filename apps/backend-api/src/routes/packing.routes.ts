@@ -1,11 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import * as crypto from 'node:crypto';
 import * as net from 'node:net';
+import { spawn } from 'node:child_process';
 import { DatabaseRepository } from '@packing-proof/database';
 import { validateAndCleanBarcode, buildCollisionProofFilename } from '@packing-proof/shared-utils';
 import { authenticateUser, checkWarehouseAccess } from '../auth/auth.middleware.js';
 import { WorkerGateway } from '../websocket/worker-gateway.js';
 import { StationGateway } from '../websocket/station-gateway.js';
+import { config } from '../config.js';
 
 export async function packingRoutes(app: FastifyInstance) {
   // 1. Validate Barcode
@@ -348,6 +350,52 @@ export async function packingRoutes(app: FastifyInstance) {
       success: true,
       data: { message: `Đã nạp thành công ${count} đơn hàng mẫu thực tế`, count }
     });
+  });
+
+  // 8.3 Live Camera MJPEG Stream Preview for Browser Viewport
+  app.get('/api/v1/stations/:id/live-preview', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const camera = await DatabaseRepository.findCameraByStationId(id);
+
+    if (!camera || !camera.rtspUrl || camera.rtspUrl.includes('mock')) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NO_LIVE_STREAM', message: 'No live RTSP camera attached to this station' }
+      });
+    }
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'multipart/x-mixed-replace; boundary=ffserver',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Connection': 'close',
+      'Pragma': 'no-cache',
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    const proc = spawn(config.ffmpegPath, [
+      '-rtsp_transport', 'tcp',
+      '-timeout', '5000000',
+      '-i', camera.rtspUrl,
+      '-f', 'mpjpeg',
+      '-q:v', '5',
+      '-r', '15',
+      '-s', '960x540',
+      'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+    proc.stdout.pipe(reply.raw);
+
+    const cleanup = () => {
+      try {
+        proc.kill();
+      } catch {}
+    };
+
+    request.raw.on('close', cleanup);
+    request.raw.on('error', cleanup);
+    reply.raw.on('close', cleanup);
+    reply.raw.on('error', cleanup);
   });
 
   // 9. Station recent sessions (today's history)

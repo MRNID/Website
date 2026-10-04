@@ -3,6 +3,7 @@ import { Camera, Video } from 'lucide-react';
 import { SessionState } from './StatusBanner';
 
 interface CameraViewportProps {
+  stationId?: string;
   stationCode: string;
   cameraName: string;
   state: SessionState;
@@ -11,6 +12,7 @@ interface CameraViewportProps {
 }
 
 export const CameraViewport: React.FC<CameraViewportProps> = ({
+  stationId,
   stationCode,
   cameraName,
   state,
@@ -19,6 +21,12 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [timecode, setTimecode] = useState('');
+  const [hasLiveStream, setHasLiveStream] = useState(true);
+
+  // Reset live stream check whenever stationId changes
+  useEffect(() => {
+    setHasLiveStream(true);
+  }, [stationId]);
 
   // Live millisecond timecode clock
   useEffect(() => {
@@ -29,7 +37,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Animated background visualization for the camera feed simulation
+  // Animated background visualization / OSD guides
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -41,24 +49,31 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
     const render = () => {
       tick++;
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Subtle warehouse grid lines
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 1;
-      const gridSize = 40;
-      for (let x = 0; x < canvas.width; x += gridSize) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-      }
-      for (let y = 0; y < canvas.height; y += gridSize) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
+      if (hasLiveStream) {
+        // Transparent clear so real camera video shows through
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      } else {
+        // Fallback simulation background
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Subtle warehouse grid lines
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1;
+        const gridSize = 40;
+        for (let x = 0; x < canvas.width; x += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        for (let y = 0; y < canvas.height; y += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.stroke();
+        }
       }
 
       // Packing area guide box (center)
@@ -67,7 +82,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
       const boxX = (canvas.width - boxW) / 2;
       const boxY = (canvas.height - boxH) / 2;
 
-      ctx.strokeStyle = state === 'RECORDING' ? 'rgba(239, 68, 68, 0.6)' : 'rgba(59, 130, 246, 0.4)';
+      ctx.strokeStyle = state === 'RECORDING' ? 'rgba(239, 68, 68, 0.7)' : 'rgba(59, 130, 246, 0.5)';
       ctx.lineWidth = 2;
       ctx.strokeRect(boxX, boxY, boxW, boxH);
 
@@ -116,7 +131,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [state]);
+  }, [state, hasLiveStream]);
 
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -126,11 +141,22 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
   return (
     <div className="relative w-full h-full min-h-[360px] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center">
+      {/* Real Live Camera Video Stream */}
+      {stationId && hasLiveStream ? (
+        <img
+          key={stationId}
+          src={`http://localhost:4000/api/v1/stations/${stationId}/live-preview`}
+          alt="Live Camera Feed"
+          onError={() => setHasLiveStream(false)}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+      ) : null}
+
       <canvas
         ref={canvasRef}
         width={960}
         height={540}
-        className="w-full h-full object-cover"
+        className="absolute inset-0 w-full h-full object-cover pointer-events-none"
       />
 
       {/* Camera OSD Overlays */}
