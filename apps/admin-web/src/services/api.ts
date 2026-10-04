@@ -224,6 +224,14 @@ class AdminApiService {
   async seedOrders(): Promise<any> {
     return this.request('/orders/seed', { method: 'POST' });
   }
+
+  async deleteOrder(orderId: string): Promise<any> {
+    return this.request(`/orders/${orderId}`, { method: 'DELETE' });
+  }
+
+  async purgeOrders(): Promise<any> {
+    return this.request('/orders/purge', { method: 'DELETE' });
+  }
 }
 
 export const adminApi = new AdminApiService();

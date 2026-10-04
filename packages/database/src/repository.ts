@@ -947,4 +947,51 @@ export class DatabaseRepository {
 
     return sampleOrders.length;
   }
+
+  static async deleteOrder(orderId: string): Promise<boolean> {
+    const pool = await getDbPool();
+    // 1. Get all session IDs for this order
+    const sessionsRes = await pool.request()
+      .input('orderId', sql.VarChar(36), orderId)
+      .query('SELECT id FROM packing_sessions WHERE order_id = @orderId');
+    const sessionIds = sessionsRes.recordset.map((r: any) => r.id);
+
+    if (sessionIds.length > 0) {
+      // 2. Clear inbox references
+      for (const sid of sessionIds) {
+        await pool.request()
+          .input('sid', sql.VarChar(36), sid)
+          .query('DELETE FROM worker_events_inbox WHERE session_id = @sid');
+      }
+      // 3. Delete packing_sessions (cascades to videos and packing_commands)
+      for (const sid of sessionIds) {
+        await pool.request()
+          .input('sid', sql.VarChar(36), sid)
+          .query('DELETE FROM packing_sessions WHERE id = @sid');
+      }
+    }
+
+    // 4. Delete the order
+    await pool.request()
+      .input('orderId', sql.VarChar(36), orderId)
+      .query('DELETE FROM orders WHERE id = @orderId');
+
+    return true;
+  }
+
+  static async purgeAllOrders(warehouseId?: string): Promise<number> {
+    const pool = await getDbPool();
+    let query = 'SELECT id FROM orders WHERE 1=1';
+    const req = pool.request();
+    if (warehouseId) {
+      req.input('whId', sql.VarChar(36), warehouseId);
+      query += ' AND warehouse_id = @whId';
+    }
+    const res = await req.query(query);
+    const orderIds = res.recordset.map((r: any) => r.id);
+    for (const oid of orderIds) {
+      await this.deleteOrder(oid);
+    }
+    return orderIds.length;
+  }
 }

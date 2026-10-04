@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Sparkles, CheckCircle2, Clock, Video, RefreshCw, User } from 'lucide-react';
+import { Search, Sparkles, CheckCircle2, Clock, Video, RefreshCw, User, Trash2 } from 'lucide-react';
 import { adminApi } from '../services/api';
 import { VideoPlayerModal } from '../components/VideoPlayerModal';
 
@@ -38,6 +38,31 @@ export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
     }
   };
 
+  const handleDeleteOrder = async (orderId: string, trackingCode: string) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa đơn "${trackingCode}" (kèm dữ liệu phiên đóng gói và liên kết video nếu có) không?`)) {
+      return;
+    }
+    try {
+      await adminApi.deleteOrder(orderId);
+      await loadOrders();
+    } catch (err: any) {
+      alert(`Lỗi xóa đơn: ${err.message}`);
+    }
+  };
+
+  const handlePurgeAllOrders = async () => {
+    if (!window.confirm('⚠️ CẢNH BÁO: Bạn có chắc chắn muốn DỌN SẠCH TẤT CẢ đơn hàng trong kho không? Thao tác này sẽ xóa toàn bộ đơn thử nghiệm để bạn bắt đầu mới.')) {
+      return;
+    }
+    try {
+      const res = await adminApi.purgeOrders();
+      alert(`Đã dọn sạch ${res.count || ''} đơn hàng.`);
+      await loadOrders();
+    } catch (err: any) {
+      alert(`Lỗi dọn sạch: ${err.message}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -60,6 +85,16 @@ export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
           >
             <Sparkles className="w-4 h-4 text-purple-200" />
             <span>{seeding ? 'ĐANG NẠP...' : '+ NẠP 5 ĐƠN MẪU THỰC TẾ'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePurgeAllOrders}
+            className="px-3.5 py-2 bg-rose-950/80 hover:bg-rose-800 text-rose-300 hover:text-white border border-rose-800/80 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer"
+            title="Dọn sạch toàn bộ đơn hàng thử nghiệm"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>DỌN SẠCH ĐƠN HÀNG</span>
           </button>
 
           <button
@@ -102,7 +137,7 @@ export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
                 <th className="py-3.5 px-4">Khách Hàng & Địa Chỉ</th>
                 <th className="py-3.5 px-4">Sản Phẩm Trong Đơn</th>
                 <th className="py-3.5 px-4">Trạng Thái Đóng Gói</th>
-                <th className="py-3.5 px-4 text-right">Bằng Chứng Video</th>
+                <th className="py-3.5 px-4 text-right">Bằng Chứng Video & Thao Tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/60">
@@ -187,31 +222,42 @@ export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
                         )}
                       </td>
 
-                      {/* Video Proof Link */}
+                      {/* Video Proof Link & Actions */}
                       <td className="py-3 px-4 text-right">
-                        {ord.video ? (
+                        <div className="flex items-center justify-end space-x-2">
+                          {ord.video ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedVideo({
+                                id: ord.video.id,
+                                filename: ord.video.filename,
+                                duration: ord.video.duration,
+                                sha256: ord.video.sha256,
+                                tracking_code: ord.trackingCode,
+                                order_code: ord.orderCode,
+                                operator_name: 'Nhân viên đóng hàng',
+                                station_name: 'Bàn đóng gói',
+                                station_code: 'PACK01',
+                                created_at: ord.createdAt
+                              })}
+                              className="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center space-x-1 transition"
+                            >
+                              <Video className="w-3.5 h-3.5" />
+                              <span>XEM VIDEO</span>
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 italic mr-1">Chưa có video</span>
+                          )}
+
                           <button
                             type="button"
-                            onClick={() => setSelectedVideo({
-                              id: ord.video.id,
-                              filename: ord.video.filename,
-                              duration: ord.video.duration,
-                              sha256: ord.video.sha256,
-                              tracking_code: ord.trackingCode,
-                              order_code: ord.orderCode,
-                              operator_name: 'Nhân viên đóng hàng',
-                              station_name: 'Bàn đóng gói',
-                              station_code: 'PACK01',
-                              created_at: ord.createdAt
-                            })}
-                            className="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center space-x-1 ml-auto transition"
+                            onClick={() => handleDeleteOrder(ord.id, ord.trackingCode)}
+                            title="Xóa đơn hàng này"
+                            className="p-1.5 bg-rose-950/60 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-800/60 rounded-lg transition cursor-pointer"
                           >
-                            <Video className="w-3.5 h-3.5" />
-                            <span>XEM VIDEO</span>
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        ) : (
-                          <span className="text-[10px] text-slate-500 italic">Chưa có video</span>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   );

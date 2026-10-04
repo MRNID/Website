@@ -352,6 +352,26 @@ export async function packingRoutes(app: FastifyInstance) {
     });
   });
 
+  // 8.2.1 Delete Single Order
+  app.delete('/api/v1/orders/:id', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    await DatabaseRepository.deleteOrder(id);
+    return reply.status(200).send({
+      success: true,
+      data: { message: 'Đã xóa đơn hàng thành công' }
+    });
+  });
+
+  // 8.2.2 Purge All Orders / Clear Test Orders
+  app.delete('/api/v1/orders/purge', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    const count = await DatabaseRepository.purgeAllOrders(user.warehouseId || undefined);
+    return reply.status(200).send({
+      success: true,
+      data: { message: `Đã dọn dẹp ${count} đơn hàng`, count }
+    });
+  });
+
   // 8.3 Live Camera MJPEG Stream Preview for Browser Viewport
   app.get('/api/v1/stations/:id/live-preview', async (request, reply) => {
     const { id } = request.params as { id: string };
