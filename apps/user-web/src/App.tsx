@@ -153,6 +153,25 @@ export default function App() {
           }
         });
         loadOrdersQueue();
+
+        // Tự động chuyển về trạng thái SẴN SÀNG (IDLE) sau 3.5s để đóng đơn kế tiếp
+        setTimeout(() => {
+          setSessionState((current) => {
+            if (current === 'COMPLETED') {
+              setTrackingCode('');
+              setTrackingInput('');
+              setOrderCode('');
+              setCurrentCustomer(null);
+              setCheckedItems({});
+              setSessionId(null);
+              setCompletedHash(null);
+              setCompletedDuration(null);
+              setErrorMessage(null);
+              return 'IDLE';
+            }
+            return current;
+          });
+        }, 3500);
       } else if (newState === 'FAILED' || newState === 'INDETERMINATE_TIMEOUT') {
         sounds.playErrorBuzz();
         setErrorMessage(`Phiên quay kết thúc với trạng thái: ${newState}`);
@@ -301,8 +320,12 @@ export default function App() {
 
       if (e.key === 'F2') {
         e.preventDefault();
-        const inputElem = document.getElementById('barcode-input-field');
-        if (inputElem) inputElem.focus();
+        if ((sessionState === 'IDLE' || sessionState === 'COMPLETED') && pendingOrders.length > 0) {
+          executeStartPacking(pendingOrders[0].trackingCode);
+        } else {
+          const inputElem = document.getElementById('barcode-input-field');
+          if (inputElem) inputElem.focus();
+        }
       } else if (e.key === 'F4') {
         e.preventDefault();
         if (sessionState === 'RECORDING') {
@@ -317,15 +340,19 @@ export default function App() {
         e.preventDefault();
         if (sessionState === 'RECORDING') {
           handleStopPacking();
-        } else if (sessionState === 'IDLE' && trackingInput.trim()) {
-          executeStartPacking(trackingInput);
+        } else if ((sessionState === 'IDLE' || sessionState === 'COMPLETED')) {
+          if (trackingInput.trim()) {
+            executeStartPacking(trackingInput);
+          } else if (pendingOrders.length > 0) {
+            executeStartPacking(pendingOrders[0].trackingCode);
+          }
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyShortcuts);
     return () => window.removeEventListener('keydown', handleKeyShortcuts);
-  }, [sessionState, trackingInput, sessionId]);
+  }, [sessionState, trackingInput, sessionId, pendingOrders]);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 select-none overflow-hidden font-sans">

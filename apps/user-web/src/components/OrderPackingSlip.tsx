@@ -189,17 +189,27 @@ export const OrderPackingSlip: React.FC<OrderPackingSlipProps> = ({
             </button>
           </div>
         ) : (
-          pendingOrders.map((ord) => {
+          pendingOrders.map((ord, idx) => {
             const cust = ord.customer;
             const items = cust?.items || [];
+            const isNext = idx === 0;
 
             return (
               <div
                 key={ord.id}
-                className="bg-slate-900/80 border border-slate-700/70 hover:border-slate-500 rounded-xl p-3 flex items-center justify-between text-xs transition"
+                className={`rounded-xl p-3 flex items-center justify-between text-xs transition ${
+                  isNext
+                    ? 'bg-emerald-950/30 border border-emerald-500/50 shadow-md ring-1 ring-emerald-500/20'
+                    : 'bg-slate-900/80 border border-slate-700/70 hover:border-slate-500'
+                }`}
               >
                 <div className="space-y-1 pr-3">
                   <div className="flex items-center space-x-2">
+                    {isNext && (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500 text-[10px] font-black text-slate-950 uppercase tracking-wider animate-pulse">
+                        ĐƠN TIẾP THEO
+                      </span>
+                    )}
                     <span className="font-mono font-bold text-white text-xs">{ord.trackingCode}</span>
                     <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-blue-300 border border-slate-700">
                       {ord.platform}
@@ -218,9 +228,13 @@ export const OrderPackingSlip: React.FC<OrderPackingSlipProps> = ({
                   type="button"
                   disabled={isRecording}
                   onClick={() => onSelectPendingOrder(ord)}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center space-x-1 shrink-0 shadow transition cursor-pointer"
+                  className={`px-3 py-1.5 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center space-x-1 shrink-0 shadow transition cursor-pointer ${
+                    isNext
+                      ? 'bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400/30'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                  }`}
                 >
-                  <span>ĐÓNG ĐƠN NÀY</span>
+                  <span>{isNext ? 'ĐÓNG ĐƠN (F2)' : 'ĐÓNG ĐƠN'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>

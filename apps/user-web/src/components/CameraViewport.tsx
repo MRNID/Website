@@ -55,7 +55,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
   // Hands-free Camera Barcode Scanner Loop
   useEffect(() => {
-    if (!autoScanEnabled || state !== 'IDLE' || streamError) return;
+    if (!autoScanEnabled || (state !== 'IDLE' && state !== 'COMPLETED') || streamError) return;
 
     let active = true;
     let isDecoding = false;
@@ -178,7 +178,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
         grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
         ctx.fillStyle = grad;
         ctx.fillRect(boxX, scanY - 1, boxW, 2);
-      } else if (autoScanEnabled && state === 'IDLE' && !streamError) {
+      } else if (autoScanEnabled && (state === 'IDLE' || state === 'COMPLETED') && !streamError) {
         // Subtle emerald targeting scan line when auto-scan is active
         const scanY = boxY + ((tick * 1.5) % boxH);
         const grad = ctx.createLinearGradient(boxX, scanY, boxX + boxW, scanY);
@@ -274,7 +274,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
       </div>
 
       {/* Top Center: Auto-scan prompt when active */}
-      {autoScanEnabled && state === 'IDLE' && !streamError && (
+      {autoScanEnabled && (state === 'IDLE' || state === 'COMPLETED') && !streamError && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 hidden md:flex items-center space-x-1.5 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-emerald-500/30 text-[11px] text-emerald-300 font-medium z-10">
           <ScanLine className="w-3 h-3 text-emerald-400" />
           <span>Đưa mã vận đơn vào khung camera để tự động đóng đơn</span>
