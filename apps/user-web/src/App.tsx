@@ -4,6 +4,7 @@ import { StatusBanner, SessionState } from './components/StatusBanner';
 import { CameraViewport } from './components/CameraViewport';
 import { ActionControls } from './components/ActionControls';
 import { PackingHistory } from './components/PackingHistory';
+import { OrderPackingSlip } from './components/OrderPackingSlip';
 import { DuplicateWarningModal } from './components/DuplicateWarningModal';
 import { ForceUnlockModal } from './components/ForceUnlockModal';
 import { LoginModal } from './components/LoginModal';
@@ -28,6 +29,14 @@ export default function App() {
   const [completedDuration, setCompletedDuration] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Active Order & Checklist State
+  const [currentCustomer, setCurrentCustomer] = useState<any | null>(null);
+  const [orderCode, setOrderCode] = useState<string | null>(null);
+  const [orderPlatform, setOrderPlatform] = useState<string | null>(null);
+  const [checkedItems, setCheckedItems] = useState<Record<number, boolean>>({});
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [isSeedingOrders, setIsSeedingOrders] = useState<boolean>(false);
+
   // Modals & Popups
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
@@ -41,6 +50,18 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const timerRef = useRef<any>(null);
+
+  // Load pending orders queue
+  const loadOrdersQueue = useCallback(async () => {
+    try {
+      const orders = await api.getOrders();
+      // Filter out completed ones or show pending
+      const pending = orders.filter((o: any) => o.packingStatus !== 'COMPLETED');
+      setPendingOrders(pending);
+    } catch (err) {
+      console.error('Failed to load pending orders:', err);
+    }
+  }, []);
 
   // 1. Initial Authentication & Station bootstrap
   const initApp = useCallback(async () => {
@@ -68,7 +89,9 @@ export default function App() {
     } catch (err) {
       console.error('Failed to load stations:', err);
     }
-  }, [currentStation]);
+
+    loadOrdersQueue();
+  }, [currentStation, loadOrdersQueue]);
 
   useEffect(() => {
     initApp();
@@ -128,9 +151,11 @@ export default function App() {
             }
           }
         });
+        loadOrdersQueue();
       } else if (newState === 'FAILED' || newState === 'INDETERMINATE_TIMEOUT') {
         sounds.playErrorBuzz();
         setErrorMessage(`Phiên quay kết thúc với trạng thái: ${newState}`);
+        loadOrdersQueue();
       }
     },
     onWorkerStatusChanged: (data) => {
@@ -164,6 +189,12 @@ export default function App() {
         setIsActionLoading(false);
         return;
       }
+
+      // Populate order details & checklist
+      setCurrentCustomer(validation.customer || null);
+      setOrderCode(validation.orderCode || cleanCode);
+      setOrderPlatform(validation.platform || 'SPX');
+      setCheckedItems({});
 
       // Initiate session
       sounds.playScanSuccess();
@@ -210,6 +241,7 @@ export default function App() {
       setSessionState('IDLE');
       setTrackingCode('');
       setTrackingInput('');
+      setCurrentCustomer(null);
       return;
     }
 
@@ -219,13 +251,28 @@ export default function App() {
       setSessionState('IDLE');
       setTrackingCode('');
       setTrackingInput('');
+      setCurrentCustomer(null);
       setElapsedSeconds(0);
       loadRecentHistory();
+      loadOrdersQueue();
     } catch (err: any) {
       sounds.playErrorBuzz();
       setErrorMessage(err.message || 'Lỗi hủy phiên');
     } finally {
       setIsActionLoading(false);
+    }
+  };
+
+  // Seed sample orders helper
+  const handleSeedOrders = async () => {
+    setIsSeedingOrders(true);
+    try {
+      await api.seedOrders();
+      await loadOrdersQueue();
+    } catch (err: any) {
+      alert('Lỗi nạp đơn: ' + err.message);
+    } finally {
+      setIsSeedingOrders(false);
     }
   };
 
@@ -248,44 +295,40 @@ export default function App() {
   useEffect(() => {
     const handleKeyShortcuts = (e: KeyboardEvent) => {
       // Don't intercept if focus is inside text input and key is Space
-      const isInput = (e.target as HTMLElement)?.tagName === 'INPUT';
+      const target = e.target as HTMLElement;
+      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
 
       if (e.key === 'F2') {
         e.preventDefault();
-        if (sessionState === 'IDLE' || sessionState === 'COMPLETED' || sessionState === 'FAILED') {
-          if (trackingInput.trim()) {
-            executeStartPacking(trackingInput);
-          }
-        }
-      } else if (e.key === 'F4' || (e.code === 'Space' && !isInput)) {
+        const inputElem = document.getElementById('barcode-input-field');
+        if (inputElem) inputElem.focus();
+      } else if (e.key === 'F4') {
+        e.preventDefault();
         if (sessionState === 'RECORDING') {
-          e.preventDefault();
           handleStopPacking();
         }
       } else if (e.key === 'Escape') {
-        if (isDuplicateModalOpen) {
-          setIsDuplicateModalOpen(false);
-        } else if (isForceUnlockOpen) {
-          setIsForceUnlockOpen(false);
-        } else if (sessionState === 'RECORDING' || sessionState === 'WAITING') {
+        if (sessionState === 'RECORDING' || sessionState === 'WAITING') {
+          e.preventDefault();
           handleCancelPacking();
         }
-      } else if (e.key === 'F8') {
+      } else if (e.key === ' ' && !isInput) {
         e.preventDefault();
-        if (sessionState === 'FAILED' || sessionState === 'INDETERMINATE_TIMEOUT') {
-          setSessionState('IDLE');
-          setErrorMessage(null);
+        if (sessionState === 'RECORDING') {
+          handleStopPacking();
+        } else if (sessionState === 'IDLE' && trackingInput.trim()) {
+          executeStartPacking(trackingInput);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyShortcuts);
     return () => window.removeEventListener('keydown', handleKeyShortcuts);
-  }, [sessionState, trackingInput, isDuplicateModalOpen, isForceUnlockOpen]);
+  }, [sessionState, trackingInput, sessionId]);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden">
-      {/* Top Header */}
+    <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 select-none overflow-hidden font-sans">
+      {/* Top Application Header */}
       <Header
         user={user}
         stations={stations}
@@ -314,14 +357,33 @@ export default function App() {
 
         {/* Center Grid: Viewport + Controls + History */}
         <div className="flex-1 grid grid-cols-12 gap-5 min-h-0">
-          {/* Left Column: Camera Viewport (7 cols) */}
-          <div className="col-span-7 flex flex-col h-full">
-            <CameraViewport
-              stationCode={currentStation?.code || 'PACK01'}
-              cameraName={currentStation?.camera?.name || 'CAM_PACK01'}
-              state={sessionState}
+          {/* Left Column: Camera Viewport + Order Checklist / Pending Queue (7 cols) */}
+          <div className="col-span-7 flex flex-col space-y-3.5 h-full overflow-y-auto pr-1">
+            <div className="h-[310px] shrink-0">
+              <CameraViewport
+                stationCode={currentStation?.code || 'PACK01'}
+                cameraName={currentStation?.camera?.name || 'CAM_PACK01'}
+                state={sessionState}
+                trackingCode={trackingCode}
+                elapsedSeconds={elapsedSeconds}
+              />
+            </div>
+
+            <OrderPackingSlip
               trackingCode={trackingCode}
-              elapsedSeconds={elapsedSeconds}
+              orderCode={orderCode}
+              platform={orderPlatform}
+              customer={currentCustomer}
+              checkedItems={checkedItems}
+              onToggleItem={(idx) => setCheckedItems((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+              pendingOrders={pendingOrders}
+              onSelectPendingOrder={(ord) => {
+                setTrackingInput(ord.trackingCode);
+                executeStartPacking(ord.trackingCode);
+              }}
+              onSeedOrders={handleSeedOrders}
+              isSeeding={isSeedingOrders}
+              isRecording={sessionState === 'RECORDING' || sessionState === 'PROCESSING'}
             />
           </div>
 
@@ -338,6 +400,7 @@ export default function App() {
               onRetry={() => {
                 setSessionState('IDLE');
                 setErrorMessage(null);
+                setCurrentCustomer(null);
               }}
               onOpenForceUnlock={() => setIsForceUnlockOpen(true)}
               isActionLoading={isActionLoading}
@@ -385,7 +448,7 @@ export default function App() {
             });
             setSessionId(res.sessionId);
           } catch (err: any) {
-            setErrorMessage(err.message);
+            setErrorMessage(err.message || 'Lỗi quay đè');
             setSessionState('FAILED');
           }
         }}
@@ -401,7 +464,10 @@ export default function App() {
           setTrackingCode('');
           setTrackingInput('');
           setErrorMessage(null);
+          setCurrentCustomer(null);
           loadRecentHistory();
+          loadOrdersQueue();
+          setIsForceUnlockOpen(false);
         }}
         onClose={() => setIsForceUnlockOpen(false)}
       />

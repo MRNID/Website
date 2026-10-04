@@ -29,15 +29,27 @@ export async function packingRoutes(app: FastifyInstance) {
 
     const user = request.user!;
     const duplicateCheck = await DatabaseRepository.checkDuplicateTracking(user.warehouseId || '', match.cleanedCode);
+    const orderRecord = await DatabaseRepository.findOrderByTrackingCode(user.warehouseId || '', match.cleanedCode);
+
+    let customerData = null;
+    if (orderRecord?.customer_info) {
+      try {
+        customerData = JSON.parse(orderRecord.customer_info);
+      } catch {
+        customerData = { note: orderRecord.customer_info };
+      }
+    }
 
     return reply.status(200).send({
       success: true,
       data: {
         isValid: true,
-        platform: match.platform,
+        platform: orderRecord?.platform || match.platform,
         cleanedCode: match.cleanedCode,
+        orderCode: orderRecord?.order_code || match.cleanedCode,
         isDuplicate: duplicateCheck.isDuplicate,
-        previousPackedAt: duplicateCheck.packedAt || null
+        previousPackedAt: duplicateCheck.packedAt || null,
+        customer: customerData
       }
     });
   });
@@ -312,6 +324,29 @@ export async function packingRoutes(app: FastifyInstance) {
     return reply.status(200).send({
       success: true,
       data: stations
+    });
+  });
+
+  // 8.1 List Orders & Packing Status
+  app.get('/api/v1/orders', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    const search = (request.query as any)?.search;
+    const orders = await DatabaseRepository.getOrders({
+      warehouseId: user.warehouseId || undefined,
+      search: search ? String(search).trim() : undefined
+    });
+    return reply.status(200).send({
+      success: true,
+      data: orders
+    });
+  });
+
+  // 8.2 Seed Realistic E-Commerce Orders
+  app.post('/api/v1/orders/seed', { preHandler: [authenticateUser] }, async (_request, reply) => {
+    const count = await DatabaseRepository.seedSampleOrders();
+    return reply.status(200).send({
+      success: true,
+      data: { message: `Đã nạp thành công ${count} đơn hàng mẫu thực tế`, count }
     });
   });
 

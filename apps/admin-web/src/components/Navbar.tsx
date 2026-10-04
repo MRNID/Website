@@ -1,8 +1,8 @@
 import React from 'react';
-import { LayoutDashboard, Video, Server, LogOut, ShieldCheck, User, Sliders } from 'lucide-react';
+import { LayoutDashboard, Video, Server, LogOut, ShieldCheck, User, Sliders, Package } from 'lucide-react';
 import { AdminUser } from '../services/api';
 
-export type AdminTab = 'dashboard' | 'videos' | 'stations' | 'settings';
+export type AdminTab = 'dashboard' | 'orders' | 'videos' | 'stations' | 'settings';
 
 interface NavbarProps {
   currentTab: AdminTab;
@@ -45,6 +45,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <LayoutDashboard className="w-4 h-4" />
             <span>TỔNG QUAN</span>
+          </button>
+
+          <button
+            onClick={() => onSelectTab('orders')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition ${
+              currentTab === 'orders'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span>ĐƠN HÀNG</span>
           </button>
 
           <button

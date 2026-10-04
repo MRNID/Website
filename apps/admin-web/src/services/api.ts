@@ -214,6 +214,16 @@ class AdminApiService {
       body: JSON.stringify(data)
     });
   }
+
+  async getOrders(params?: { search?: string }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.search) query.append('search', params.search);
+    return this.request(`/orders?${query.toString()}`);
+  }
+
+  async seedOrders(): Promise<any> {
+    return this.request('/orders/seed', { method: 'POST' });
+  }
 }
 
 export const adminApi = new AdminApiService();

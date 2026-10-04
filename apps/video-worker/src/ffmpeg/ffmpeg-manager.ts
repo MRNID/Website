@@ -60,8 +60,10 @@ export class FFmpegManager {
       ffmpegAvailable = false;
     }
 
-    if (!ffmpegAvailable) {
-      console.warn(`[FFmpegManager] FFmpeg binary not found at '${workerConfig.ffmpegPath}'. Running in Simulation / Mock Mode.`);
+    const isMock = !ffmpegAvailable || !params.camera.url || params.camera.url.toLowerCase().includes('mock');
+
+    if (isMock) {
+      console.warn(`[FFmpegManager] Running in Simulation / Mock Mode (url: ${params.camera.url || 'none'}).`);
       // Mock mode: writes simulated fMP4 file chunks periodically
       fs.writeFileSync(tempFmp4Path, Buffer.from('MOCK_FMP4_HEADER_' + params.sessionId));
 
@@ -92,11 +94,12 @@ export class FFmpegManager {
       return;
     }
 
-    // Native FFmpeg Execution
+    // Native FFmpeg Execution with Real RTSP Camera
     const args: string[] = ['-y'];
     if (params.camera.type === 'RTSP' && params.camera.url) {
       args.push(
         '-rtsp_transport', 'tcp',
+        '-timeout', '5000000', // 5s socket timeout for modern FFmpeg
         '-i', params.camera.url,
         '-c:v', 'copy',
         '-an',
@@ -119,7 +122,7 @@ export class FFmpegManager {
     }
 
     console.log(`[FFmpegManager] Spawning: ${workerConfig.ffmpegPath} ${args.join(' ')}`);
-    const proc = spawn(workerConfig.ffmpegPath, args);
+    const proc = spawn(workerConfig.ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
     this.activeSession = {
       sessionId: params.sessionId,
@@ -133,10 +136,11 @@ export class FFmpegManager {
     };
 
     let keyframeSent = false;
-    proc.stderr.on('data', (chunk) => {
+    proc.stderr?.on('data', (chunk) => {
       const text = chunk.toString();
-      if (!keyframeSent && (text.includes('frame=') || text.includes('Output #0'))) {
+      if (!keyframeSent && (text.includes('frame=') || text.includes('Output #0') || text.includes('Stream #0:0') || text.includes('Press [q]'))) {
         keyframeSent = true;
+        console.log(`[FFmpegManager] Real RTSP camera stream ingested! First keyframe detected (PID: ${proc.pid}).`);
         params.onFirstKeyframe(proc.pid || 1);
       }
     });
@@ -166,34 +170,51 @@ export class FFmpegManager {
     if (session.isMock) {
       // Mock Finalize
       fs.copyFileSync(session.tempFmp4Path, session.finalTmpPath);
-    } else if (session.process && !session.process.killed) {
+    } else if (session.process && session.process.exitCode === null) {
       // Send 'q' to stdin for clean MP4 atom finalization
-      session.process.stdin?.write('q\n');
+      try {
+        session.process.stdin?.write('q\n');
+      } catch (e) {
+        console.warn('[FFmpegManager] Failed to write q to stdin:', e);
+      }
+
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          session.process?.kill('SIGINT');
+          try {
+            session.process?.kill();
+          } catch {}
           resolve();
         }, 3000);
 
-        session.process?.on('close', () => {
+        session.process?.once('close', () => {
           clearTimeout(timeout);
           resolve();
         });
       });
 
-      // Remux to faststart
-      await new Promise<void>((resolve, reject) => {
-        const remux = spawn(workerConfig.ffmpegPath, [
-          '-y',
-          '-i', session.tempFmp4Path,
-          '-c', 'copy',
-          '-f', 'mp4',
-          '-movflags', '+faststart',
-          session.finalTmpPath
-        ]);
-        remux.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`Remux failed: ${code}`))));
-        remux.on('error', (err) => reject(err));
-      });
+      // Remux to faststart for web streaming, fallback to direct copy if remux fails
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const remux = spawn(workerConfig.ffmpegPath, [
+            '-y',
+            '-i', session.tempFmp4Path,
+            '-c', 'copy',
+            '-f', 'mp4',
+            '-movflags', '+faststart',
+            session.finalTmpPath
+          ]);
+          remux.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`Remux failed: ${code}`))));
+          remux.on('error', (err) => reject(err));
+        });
+      } catch (remuxErr) {
+        console.warn('[FFmpegManager] Faststart remux failed, falling back to copy:', remuxErr);
+        fs.copyFileSync(session.tempFmp4Path, session.finalTmpPath);
+      }
+    } else {
+      // If process already exited or closed
+      if (fs.existsSync(session.tempFmp4Path)) {
+        fs.copyFileSync(session.tempFmp4Path, session.finalTmpPath);
+      }
     }
 
     // SHA-256 Calculation

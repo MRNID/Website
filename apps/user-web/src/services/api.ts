@@ -41,8 +41,16 @@ export interface BarcodeValidationResult {
   isValid: boolean;
   platform: string;
   cleanedCode: string;
+  orderCode?: string;
   isDuplicate: boolean;
   previousPackedAt?: string;
+  customer?: {
+    customerName?: string;
+    phone?: string;
+    address?: string;
+    note?: string;
+    items?: Array<{ sku: string; name: string; quantity: number; price?: number }>;
+  };
 }
 
 class ApiService {
@@ -156,6 +164,14 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ reason })
     });
+  }
+
+  async getOrders(): Promise<any[]> {
+    return this.request('/orders');
+  }
+
+  async seedOrders(): Promise<any> {
+    return this.request('/orders/seed', { method: 'POST' });
   }
 }
 

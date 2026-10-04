@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Navbar, AdminTab } from './components/Navbar';
 import { DashboardPage } from './pages/DashboardPage';
+import { OrdersPage } from './pages/OrdersPage';
 import { VideoSearchPage } from './pages/VideoSearchPage';
 import { StationsPage } from './pages/StationsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -61,6 +62,7 @@ export default function App() {
         {currentTab === 'dashboard' && (
           <DashboardPage onNavigateToVideos={() => setCurrentTab('videos')} />
         )}
+        {currentTab === 'orders' && <OrdersPage />}
         {currentTab === 'videos' && <VideoSearchPage />}
         {currentTab === 'stations' && <StationsPage />}
         {currentTab === 'settings' && <SettingsPage />}
