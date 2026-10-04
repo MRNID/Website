@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Sparkles, CheckCircle2, Clock, Video, RefreshCw, User, Trash2 } from 'lucide-react';
+import { Search, Sparkles, CheckCircle2, Clock, Video, RefreshCw, User, Trash2, FileSpreadsheet } from 'lucide-react';
 import { adminApi } from '../services/api';
 import { VideoPlayerModal } from '../components/VideoPlayerModal';
+import { ImportOrdersModal } from '../components/ImportOrdersModal';
 
 export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
 
   const loadOrders = useCallback(async () => {
@@ -77,6 +79,15 @@ export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
         </div>
 
         <div className="flex items-center space-x-3">
+          <button
+            type="button"
+            onClick={() => setIsImportModalOpen(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 shadow-lg transition cursor-pointer"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-blue-200" />
+            <span>📥 NHẬP EXCEL / CSV</span>
+          </button>
+
           <button
             type="button"
             onClick={handleSeedOrders}
@@ -276,6 +287,13 @@ export const OrdersPage: React.FC<{ onNavigateToVideos?: () => void }> = () => {
           onUpdated={() => loadOrders()}
         />
       )}
+
+      {/* Import Orders Modal */}
+      <ImportOrdersModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => loadOrders()}
+      />
     </div>
   );
 };

@@ -372,6 +372,43 @@ export async function packingRoutes(app: FastifyInstance) {
     });
   });
 
+  // 8.2.3 Import Orders (CSV or JSON batch)
+  app.post('/api/v1/orders/import', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    const body = request.body as any;
+    const ordersList = Array.isArray(body) ? body : body.orders;
+    if (!ordersList || !Array.isArray(ordersList) || ordersList.length === 0) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'EMPTY_LIST', message: 'Danh sách đơn hàng tải lên trống' }
+      });
+    }
+
+    const result = await DatabaseRepository.importOrders(ordersList, user.warehouseId || undefined);
+    return reply.status(200).send({
+      success: true,
+      data: {
+        message: `Đã nhập thành công ${result.successCount} đơn hàng vào kho`,
+        successCount: result.successCount,
+        errors: result.errors
+      }
+    });
+  });
+
+  // 8.2.4 Download Sample Import Template (CSV UTF-8)
+  app.get('/api/v1/orders/template', async (_request, reply) => {
+    const csvContent =
+      '\uFEFF' +
+      'MaDonHang,MaVanDon,SanTMDT,TenKhachHang,SoDienThoai,DiaChi,SKU,TenSanPham,SoLuong,GiaTien,GhiChu\r\n' +
+      'ORD-SPX-001,SPXVN0888999123,SPX,Nguyễn Thị Lan Anh,0984321890,"18 Nguyễn Khánh Toàn, Cầu Giấy, Hà Nội",ATN-COTTON-DEN-L,Áo Thun Nam Cotton Đen L,2,189000,Giao giờ hành chính\r\n' +
+      'ORD-SPX-001,SPXVN0888999123,SPX,Nguyễn Thị Lan Anh,0984321890,"18 Nguyễn Khánh Toàn, Cầu Giấy, Hà Nội",MLT-VINTAGE-BE,Mũ Lưỡi Trai Vintage Be,1,85000,Giao giờ hành chính\r\n' +
+      'ORD-TIKTOK-002,TIKTOK9876543210,TIKTOK,Trần Văn Hùng,0912888666,"Landmark 81, Bình Thạnh, TP.HCM",TWS-ANC-WHITE,Tai Nghe Bluetooth TWS Trắng,1,650000,Hàng điện tử xin nhẹ tay\r\n';
+
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', 'attachment; filename="Mau_Nhap_Don_Hang_Dong_Goi.csv"');
+    return reply.send(csvContent);
+  });
+
   // 8.3 Live Camera MJPEG Stream Preview for Browser Viewport
   app.get('/api/v1/stations/:id/live-preview', async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -480,6 +517,33 @@ export async function packingRoutes(app: FastifyInstance) {
     return reply.status(200).send({
       success: true,
       data
+    });
+  });
+
+  // 11.1 Get Storage & Video Retention Overview
+  app.get('/api/v1/admin/storage/overview', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const days = Number((request.query as any)?.retentionDays) || 30;
+    const overview = await DatabaseRepository.getStorageOverview(days);
+    return reply.status(200).send({
+      success: true,
+      data: overview
+    });
+  });
+
+  // 11.2 Trigger Storage Retention Cleanup
+  app.post('/api/v1/admin/storage/cleanup', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const user = request.user!;
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'Only admins can trigger storage cleanup' } });
+    }
+    const days = Number((request.body as any)?.retentionDays) || 30;
+    const result = await DatabaseRepository.cleanupExpiredVideos(days);
+    return reply.status(200).send({
+      success: true,
+      data: {
+        message: `Đã dọn dẹp thành công ${result.deletedVideosCount} video hết hạn, giải phóng ${(result.freedBytes / (1024 * 1024)).toFixed(2)} MB`,
+        ...result
+      }
     });
   });
 

@@ -994,4 +994,166 @@ export class DatabaseRepository {
     }
     return orderIds.length;
   }
+
+  static async importOrders(
+    ordersList: Array<{
+      orderCode: string;
+      trackingCode: string;
+      platform?: string;
+      customerName?: string;
+      phone?: string;
+      address?: string;
+      note?: string;
+      items?: Array<{ sku: string; name: string; quantity: number; price?: number }>;
+    }>,
+    warehouseId?: string
+  ): Promise<{ successCount: number; errors: string[] }> {
+    const pool = await getDbPool();
+    let targetWhId = warehouseId;
+    if (!targetWhId) {
+      const whRes = await pool.request().query('SELECT TOP 1 id FROM warehouses');
+      targetWhId = whRes.recordset[0]?.id;
+    }
+    if (!targetWhId) {
+      throw new Error('Không tìm thấy kho hàng trong hệ thống');
+    }
+
+    const crypto = await import('node:crypto');
+    let successCount = 0;
+    const errors: string[] = [];
+
+    for (const ord of ordersList) {
+      const track = (ord.trackingCode || '').trim().toUpperCase();
+      const code = (ord.orderCode || track).trim();
+      if (!track) {
+        errors.push(`Bỏ qua dòng không có mã vận đơn (Đơn: ${code})`);
+        continue;
+      }
+
+      const custObj = {
+        customerName: ord.customerName || 'Khách lẻ',
+        phone: ord.phone || '',
+        address: ord.address || '',
+        note: ord.note || '',
+        items: ord.items || []
+      };
+
+      const orderId = crypto.randomUUID();
+      try {
+        await pool.request()
+          .input('id', sql.VarChar(36), orderId)
+          .input('whId', sql.VarChar(36), targetWhId)
+          .input('orderCode', sql.VarChar(100), code)
+          .input('trackingCode', sql.VarChar(100), track)
+          .input('platform', sql.VarChar(50), ord.platform || 'OTHER')
+          .input('customerInfo', sql.NVarChar(4000), JSON.stringify(custObj))
+          .query(`
+            IF NOT EXISTS (SELECT 1 FROM orders WHERE warehouse_id = @whId AND tracking_code = @trackingCode)
+              INSERT INTO orders (id, warehouse_id, order_code, tracking_code, platform, customer_info)
+              VALUES (@id, @whId, @orderCode, @trackingCode, @platform, @customerInfo)
+            ELSE
+              UPDATE orders
+              SET customer_info = @customerInfo, order_code = @orderCode, platform = @platform
+              WHERE warehouse_id = @whId AND tracking_code = @trackingCode
+          `);
+        successCount++;
+      } catch (err: any) {
+        errors.push(`Lỗi nhập đơn ${track}: ${err.message}`);
+      }
+    }
+
+    return { successCount, errors };
+  }
+
+  static async cleanupExpiredVideos(retentionDays: number = 30): Promise<{
+    deletedVideosCount: number;
+    freedBytes: number;
+    errors: string[];
+  }> {
+    const pool = await getDbPool();
+    const fs = await import('node:fs');
+
+    const res = await pool.request()
+      .input('days', sql.Int, retentionDays)
+      .query(`
+        SELECT v.id, v.local_path, v.thumbnail_path, v.file_size, v.filename
+        FROM videos v
+        WHERE v.is_locked = 0
+          AND v.dispute_status = 'NONE'
+          AND v.created_at < DATEADD(day, -@days, GETDATE())
+      `);
+
+    const expiredVideos = res.recordset;
+    let deletedVideosCount = 0;
+    let freedBytes = 0;
+    const errors: string[] = [];
+
+    for (const v of expiredVideos) {
+      try {
+        if (v.local_path && fs.existsSync(v.local_path)) {
+          const stats = fs.statSync(v.local_path);
+          freedBytes += stats.size;
+          fs.unlinkSync(v.local_path);
+        }
+        if (v.thumbnail_path && fs.existsSync(v.thumbnail_path)) {
+          try { fs.unlinkSync(v.thumbnail_path); } catch {}
+        }
+        const sidecar = `${v.local_path}.proof.json`;
+        if (fs.existsSync(sidecar)) {
+          try { fs.unlinkSync(sidecar); } catch {}
+        }
+
+        await pool.request()
+          .input('vid', sql.VarChar(36), v.id)
+          .query('DELETE FROM videos WHERE id = @vid');
+
+        deletedVideosCount++;
+      } catch (err: any) {
+        errors.push(`Lỗi xóa video ${v.filename}: ${err.message}`);
+      }
+    }
+
+    if (deletedVideosCount > 0) {
+      try {
+        const crypto = await import('node:crypto');
+        await pool.request()
+          .input('id', sql.VarChar(36), crypto.randomUUID())
+          .input('level', sql.VarChar(20), 'INFO')
+          .input('message', sql.NVarChar(sql.MAX), `Đã dọn dẹp ${deletedVideosCount} video hết hạn lưu trữ (${retentionDays} ngày), giải phóng ${(freedBytes / (1024 * 1024)).toFixed(2)} MB`)
+          .query(`INSERT INTO system_logs (id, level, message, created_at) VALUES (@id, @level, @message, GETDATE())`);
+      } catch {}
+    }
+
+    return { deletedVideosCount, freedBytes, errors };
+  }
+
+  static async getStorageOverview(retentionDays: number = 30): Promise<{
+    totalVideos: number;
+    totalBytes: number;
+    expiredVideosCount: number;
+    expiredBytes: number;
+    lockedVideosCount: number;
+  }> {
+    const pool = await getDbPool();
+    const res = await pool.request()
+      .input('days', sql.Int, retentionDays)
+      .query(`
+        SELECT
+          COUNT(*) as totalVideos,
+          ISNULL(SUM(file_size), 0) as totalBytes,
+          SUM(CASE WHEN is_locked = 0 AND dispute_status = 'NONE' AND created_at < DATEADD(day, -@days, GETDATE()) THEN 1 ELSE 0 END) as expiredVideosCount,
+          ISNULL(SUM(CASE WHEN is_locked = 0 AND dispute_status = 'NONE' AND created_at < DATEADD(day, -@days, GETDATE()) THEN file_size ELSE 0 END), 0) as expiredBytes,
+          SUM(CASE WHEN is_locked = 1 OR dispute_status != 'NONE' THEN 1 ELSE 0 END) as lockedVideosCount
+        FROM videos
+      `);
+
+    const r = res.recordset[0] || {};
+    return {
+      totalVideos: Number(r.totalVideos) || 0,
+      totalBytes: Number(r.totalBytes) || 0,
+      expiredVideosCount: Number(r.expiredVideosCount) || 0,
+      expiredBytes: Number(r.expiredBytes) || 0,
+      lockedVideosCount: Number(r.lockedVideosCount) || 0
+    };
+  }
 }

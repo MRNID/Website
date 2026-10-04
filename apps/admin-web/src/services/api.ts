@@ -232,6 +232,38 @@ class AdminApiService {
   async purgeOrders(): Promise<any> {
     return this.request('/orders/purge', { method: 'DELETE' });
   }
+
+  async importOrders(orders: any[]): Promise<any> {
+    return this.request('/orders/import', {
+      method: 'POST',
+      body: JSON.stringify({ orders })
+    });
+  }
+
+  getTemplateUrl(): string {
+    return `${API_BASE}/orders/template`;
+  }
+
+  async getStorageOverview(retentionDays: number = 30): Promise<{
+    totalVideos: number;
+    totalBytes: number;
+    expiredVideosCount: number;
+    expiredBytes: number;
+    lockedVideosCount: number;
+  }> {
+    return this.request(`/admin/storage/overview?retentionDays=${retentionDays}`);
+  }
+
+  async cleanupStorage(retentionDays: number = 30): Promise<{
+    deletedVideosCount: number;
+    freedBytes: number;
+    message: string;
+  }> {
+    return this.request('/admin/storage/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ retentionDays })
+    });
+  }
 }
 
 export const adminApi = new AdminApiService();

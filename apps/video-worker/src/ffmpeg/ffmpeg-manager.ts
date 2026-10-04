@@ -94,14 +94,23 @@ export class FFmpegManager {
       return;
     }
 
-    // Native FFmpeg Execution with Real RTSP Camera
+    // Native FFmpeg Execution with Real RTSP Camera & Forensic OSD Watermark
+    const fontPath = 'C\\:/Windows/Fonts/arial.ttf';
+    const station = params.stationCode || 'PACK01';
+    const tracking = (params.trackingCode || 'UNASSIGNED').replace(/[:\\']/g, '');
+    const filterText = `[PACKING PROOF] TRAM\\: ${station} | DON\\: ${tracking} | %{localtime}`;
+    const drawtextFilter = `drawtext=fontfile='${fontPath}':text='${filterText}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.65:boxborderw=8:x=24:y=24`;
+
     const args: string[] = ['-y'];
     if (params.camera.type === 'RTSP' && params.camera.url) {
       args.push(
         '-rtsp_transport', 'tcp',
         '-timeout', '5000000', // 5s socket timeout for modern FFmpeg
         '-i', params.camera.url,
-        '-c:v', 'copy',
+        '-vf', drawtextFilter,
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '23',
         '-an',
         '-f', 'mp4',
         '-movflags', 'empty_moov+default_base_moof+frag_keyframe',
@@ -111,6 +120,7 @@ export class FFmpegManager {
       args.push(
         '-f', 'dshow',
         '-i', `video=${params.camera.deviceName || 'USB Webcam'}`,
+        '-vf', drawtextFilter,
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-crf', '26',

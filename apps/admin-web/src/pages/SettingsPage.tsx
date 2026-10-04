@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Edit3,
   HelpCircle,
-  Activity
+  Activity,
+  Trash2
 } from 'lucide-react';
 import { adminApi } from '../services/api';
 
@@ -21,6 +22,10 @@ export const SettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Storage Overview & Retention Cleanup
+  const [storageOverview, setStorageOverview] = useState<any | null>(null);
+  const [isCleaning, setIsCleaning] = useState(false);
 
   // Storage Configs
   const [storageConfigs, setStorageConfigs] = useState<any[]>([]);
@@ -59,17 +64,36 @@ export const SettingsPage: React.FC = () => {
   const loadSettingsData = async () => {
     setLoading(true);
     try {
-      const [resSettings, resStations] = await Promise.all([
+      const [resSettings, resStations, resOverview] = await Promise.all([
         adminApi.getSettings(),
-        adminApi.getStations()
+        adminApi.getStations(),
+        adminApi.getStorageOverview(30).catch(() => null)
       ]);
       setStorageConfigs(resSettings.storageConfigs || []);
       setSettings(prev => ({ ...prev, ...(resSettings.settings || {}) }));
       setStations(resStations || []);
+      if (resOverview) setStorageOverview(resOverview);
     } catch (err: any) {
       console.error('Failed to load settings:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleManualCleanup = async () => {
+    if (!window.confirm('Bạn có chắc chắn muốn kích hoạt dọn dẹp các video đóng gói đã quá hạn lưu trữ không? (Các video đang có tranh chấp khiếu nại sẽ được giữ an toàn 100%).')) {
+      return;
+    }
+    setIsCleaning(true);
+    try {
+      const res = await adminApi.cleanupStorage(30);
+      alert(res.message);
+      const updatedOverview = await adminApi.getStorageOverview(30);
+      setStorageOverview(updatedOverview);
+    } catch (err: any) {
+      alert(`Lỗi dọn dẹp: ${err.message}`);
+    } finally {
+      setIsCleaning(false);
     }
   };
 
@@ -316,6 +340,38 @@ export const SettingsPage: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+
+          {/* Storage Retention & Cleanup Banner */}
+          <div className="bg-slate-950/70 border border-slate-700/80 rounded-2xl p-4 flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center space-x-2">
+                  <span>TIẾN TRÌNH DỌN DẸP & LƯU TRỮ XOAY VÒNG TỰ ĐỘNG</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                    CHẠY ĐỊNH KỲ 12H / LẦN
+                  </span>
+                </h4>
+                <div className="text-xs text-slate-400 mt-1 flex items-center space-x-4 font-mono">
+                  <span>Tổng video: <strong className="text-white">{storageOverview?.totalVideos || 0}</strong> ({((storageOverview?.totalBytes || 0) / (1024 * 1024)).toFixed(1)} MB)</span>
+                  <span>Được bảo vệ (Tranh chấp): <strong className="text-blue-400">{storageOverview?.lockedVideosCount || 0}</strong></span>
+                  <span>Đã hết hạn (&gt;30 ngày): <strong className="text-amber-400">{storageOverview?.expiredVideosCount || 0}</strong> ({((storageOverview?.expiredBytes || 0) / (1024 * 1024)).toFixed(1)} MB)</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleManualCleanup}
+              disabled={isCleaning}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 transition shadow cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>{isCleaning ? 'ĐANG DỌN DẸP...' : 'KÍCH HOẠT DỌN DẸP NGAY'}</span>
+            </button>
           </div>
         </div>
 

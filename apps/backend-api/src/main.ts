@@ -69,6 +69,21 @@ async function start() {
     });
 
     console.log(`[BackendAPI] WebSocket endpoints ready: /ws/worker and /ws/station`);
+
+    // Schedule periodic storage retention cleanup daemon (every 12 hours)
+    setInterval(async () => {
+      try {
+        const { DatabaseRepository } = await import('@packing-proof/database');
+        const settings = await DatabaseRepository.getSystemSettings();
+        const days = parseInt(settings.settings['retentionDays'] || '30', 10);
+        const res = await DatabaseRepository.cleanupExpiredVideos(days);
+        if (res.deletedVideosCount > 0) {
+          console.log(`[RetentionDaemon] Auto-cleaned ${res.deletedVideosCount} expired videos, freed ${(res.freedBytes / (1024 * 1024)).toFixed(2)} MB`);
+        }
+      } catch (err) {
+        console.error('[RetentionDaemon] Background cleanup error:', err);
+      }
+    }, 12 * 60 * 60 * 1000);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

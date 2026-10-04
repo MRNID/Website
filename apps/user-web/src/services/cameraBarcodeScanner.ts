@@ -33,6 +33,17 @@ class CameraBarcodeScanner {
     }
   }
 
+  private offscreenCanvas: HTMLCanvasElement | null = null;
+
+  private getOffscreenCanvas(w: number, h: number): HTMLCanvasElement {
+    if (!this.offscreenCanvas) {
+      this.offscreenCanvas = document.createElement('canvas');
+    }
+    this.offscreenCanvas.width = w;
+    this.offscreenCanvas.height = h;
+    return this.offscreenCanvas;
+  }
+
   /**
    * Scan single frame from Image or Canvas element
    */
@@ -63,11 +74,57 @@ class CameraBarcodeScanner {
             }
           }
         } catch {
-          // Fall through to ZXing
+          // Fall through to enhanced canvas
         }
       }
 
-      // 2. Fallback to ZXing BrowserMultiFormatReader
+      // 2. Preprocessed ROI Canvas Pass (High-Contrast Grayscale of Center 65% area)
+      if (!rawText && typeof document !== 'undefined') {
+        try {
+          const srcW = (element as any).naturalWidth || element.width;
+          const srcH = (element as any).naturalHeight || element.height;
+          if (srcW > 0 && srcH > 0) {
+            const cropW = Math.round(srcW * 0.65);
+            const cropH = Math.round(srcH * 0.65);
+            const cropX = Math.round((srcW - cropW) / 2);
+            const cropY = Math.round((srcH - cropH) / 2);
+
+            const canvas = this.getOffscreenCanvas(cropW, cropH);
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+              ctx.drawImage(element, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+              const imgData = ctx.getImageData(0, 0, cropW, cropH);
+              const d = imgData.data;
+              for (let i = 0; i < d.length; i += 4) {
+                const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+                const val = gray < 130 ? 0 : 255;
+                d[i] = val;
+                d[i + 1] = val;
+                d[i + 2] = val;
+              }
+              ctx.putImageData(imgData, 0, 0);
+
+              if (this.nativeDetector) {
+                try {
+                  const enResults = await this.nativeDetector.detect(canvas);
+                  if (enResults && enResults.length > 0) {
+                    rawText = enResults[0].rawValue;
+                  }
+                } catch {}
+              }
+
+              if (!rawText) {
+                try {
+                  const zxRes = await this.zxingReader.decodeFromCanvas(canvas);
+                  if (zxRes) rawText = zxRes.getText();
+                } catch {}
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // 3. Fallback to Full Frame ZXing
       if (!rawText) {
         try {
           let result: any = null;
