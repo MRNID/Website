@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, Video } from 'lucide-react';
+import { Camera, Video, ScanLine, CheckCircle2 } from 'lucide-react';
 import { SessionState } from './StatusBanner';
+import { cameraBarcodeScanner } from '../services/cameraBarcodeScanner';
+import { soundEffects } from '../utils/audioFeedback';
 
 interface CameraViewportProps {
   stationId?: string;
@@ -9,6 +11,9 @@ interface CameraViewportProps {
   state: SessionState;
   trackingCode: string | null;
   elapsedSeconds: number;
+  autoScanEnabled?: boolean;
+  onToggleAutoScan?: () => void;
+  onAutoScanBarcode?: (barcode: string) => void;
 }
 
 export const CameraViewport: React.FC<CameraViewportProps> = ({
@@ -17,12 +22,17 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
   cameraName,
   state,
   trackingCode,
-  elapsedSeconds
+  elapsedSeconds,
+  autoScanEnabled = true,
+  onToggleAutoScan,
+  onAutoScanBarcode
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const [timecode, setTimecode] = useState('');
   const [streamError, setStreamError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [detectedBanner, setDetectedBanner] = useState<string | null>(null);
 
   // Auto retry stream every 3s if it encounters an error
   useEffect(() => {
@@ -42,6 +52,44 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
     }, 50);
     return () => clearInterval(timer);
   }, []);
+
+  // Hands-free Camera Barcode Scanner Loop
+  useEffect(() => {
+    if (!autoScanEnabled || state !== 'IDLE' || streamError) return;
+
+    let active = true;
+    let isDecoding = false;
+
+    const interval = setInterval(async () => {
+      if (!active || isDecoding) return;
+      const img = imgRef.current;
+      if (!img || !img.complete || img.naturalWidth === 0) return;
+
+      isDecoding = true;
+      try {
+        const result = await cameraBarcodeScanner.scanFrame(img);
+        if (result && result.cleanedCode && active) {
+          console.log('[CameraBarcodeScanner] Detected:', result.cleanedCode, result.carrier);
+          soundEffects.playSuccessBeep();
+          setDetectedBanner(result.cleanedCode);
+          setTimeout(() => setDetectedBanner(null), 3000);
+
+          if (onAutoScanBarcode) {
+            onAutoScanBarcode(result.cleanedCode);
+          }
+        }
+      } catch (err) {
+        // Ignored frame scan error
+      } finally {
+        isDecoding = false;
+      }
+    }, 280);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [autoScanEnabled, state, streamError, onAutoScanBarcode]);
 
   // Animated background visualization / OSD guides
   useEffect(() => {
@@ -130,6 +178,15 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
         grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
         ctx.fillStyle = grad;
         ctx.fillRect(boxX, scanY - 1, boxW, 2);
+      } else if (autoScanEnabled && state === 'IDLE' && !streamError) {
+        // Subtle emerald targeting scan line when auto-scan is active
+        const scanY = boxY + ((tick * 1.5) % boxH);
+        const grad = ctx.createLinearGradient(boxX, scanY, boxX + boxW, scanY);
+        grad.addColorStop(0, 'rgba(16, 185, 129, 0)');
+        grad.addColorStop(0.5, 'rgba(16, 185, 129, 0.6)');
+        grad.addColorStop(1, 'rgba(16, 185, 129, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(boxX, scanY - 1, boxW, 2);
       }
 
       animId = requestAnimationFrame(render);
@@ -137,7 +194,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [state, streamError]);
+  }, [state, streamError, autoScanEnabled]);
 
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -150,9 +207,11 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
       {/* Real Live Camera Video Stream */}
       {stationId && !streamError ? (
         <img
+          ref={imgRef}
           key={`${stationId}_${retryCount}`}
           src={`http://localhost:4000/api/v1/stations/${stationId}/live-preview?t=${retryCount}`}
           alt="Live Camera Feed"
+          crossOrigin="anonymous"
           onError={() => {
             console.warn('Live camera stream disconnected, retrying in 3s...');
             setStreamError(true);
@@ -168,9 +227,19 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
         className="absolute inset-0 w-full h-full object-cover pointer-events-none"
       />
 
+      {/* Detected Barcode Flash Banner */}
+      {detectedBanner && (
+        <div className="absolute top-16 inset-x-0 mx-auto w-fit z-30 flex items-center space-x-2 bg-emerald-600/95 text-white px-5 py-2.5 rounded-xl border border-emerald-400 shadow-2xl animate-bounce">
+          <CheckCircle2 className="w-5 h-5 text-white" />
+          <span className="text-xs font-bold uppercase">
+            TỰ ĐỘNG NHẬN DIỆN MÃ: <span className="font-mono text-amber-200 underline">{detectedBanner}</span>
+          </span>
+        </div>
+      )}
+
       {/* Camera OSD Overlays */}
-      {/* Top Left: Station & Camera info */}
-      <div className="absolute top-4 left-4 flex items-center space-x-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-slate-200">
+      {/* Top Left: Station & Camera info + Auto-Scan Toggle */}
+      <div className="absolute top-4 left-4 flex items-center space-x-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-slate-200 z-10">
         <Camera className="w-3.5 h-3.5 text-blue-400" />
         <span>{stationCode}</span>
         <span className="text-slate-500">•</span>
@@ -184,10 +253,36 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
             </span>
           </>
         )}
+        {onToggleAutoScan && (
+          <>
+            <span className="text-slate-500">•</span>
+            <button
+              type="button"
+              onClick={onToggleAutoScan}
+              title="Bật/Tắt chế độ tự động nhận diện mã vạch qua camera"
+              className={`flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-bold transition cursor-pointer ${
+                autoScanEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              <ScanLine className={`w-3 h-3 ${autoScanEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+              <span>AUTO-SCAN: {autoScanEnabled ? 'BẬT' : 'TẮT'}</span>
+            </button>
+          </>
+        )}
       </div>
 
+      {/* Top Center: Auto-scan prompt when active */}
+      {autoScanEnabled && state === 'IDLE' && !streamError && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 hidden md:flex items-center space-x-1.5 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-emerald-500/30 text-[11px] text-emerald-300 font-medium z-10">
+          <ScanLine className="w-3 h-3 text-emerald-400" />
+          <span>Đưa mã vận đơn vào khung camera để tự động đóng đơn</span>
+        </div>
+      )}
+
       {/* Top Right: REC Indicator + Millisecond timecode */}
-      <div className="absolute top-4 right-4 flex items-center space-x-3">
+      <div className="absolute top-4 right-4 flex items-center space-x-3 z-10">
         {state === 'RECORDING' && (
           <div className="flex items-center space-x-2 bg-red-600/90 text-white px-3 py-1 rounded-md font-bold text-xs shadow-lg animate-pulse-fast">
             <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
@@ -215,7 +310,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
       )}
 
       {/* Bottom Left: Tracking Code Watermark */}
-      <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-md px-3.5 py-1.5 rounded-lg border border-white/10 text-xs font-mono">
+      <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-md px-3.5 py-1.5 rounded-lg border border-white/10 text-xs font-mono z-10">
         <span className="text-slate-400">ĐƠN HÀNG: </span>
         <span className="text-amber-300 font-bold text-sm tracking-wider">
           {trackingCode || 'CHƯA CÓ'}
@@ -223,7 +318,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
       </div>
 
       {/* Bottom Right: Video Resolution / Technical OSD */}
-      <div className="absolute bottom-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 text-[11px] text-slate-400 font-mono">
+      <div className="absolute bottom-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 text-[11px] text-slate-400 font-mono z-10">
         <span>1080p @ 30FPS • fMP4 H.264 • LOCAL SSD</span>
       </div>
     </div>

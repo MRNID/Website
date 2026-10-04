@@ -48,6 +48,7 @@ export default function App() {
   const [workerOnline, setWorkerOnline] = useState<boolean>(true);
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
 
   const timerRef = useRef<any>(null);
 
@@ -367,6 +368,14 @@ export default function App() {
                 state={sessionState}
                 trackingCode={trackingCode}
                 elapsedSeconds={elapsedSeconds}
+                autoScanEnabled={autoScanEnabled}
+                onToggleAutoScan={() => setAutoScanEnabled((prev) => !prev)}
+                onAutoScanBarcode={(scannedCode) => {
+                  if (sessionState === 'IDLE' && !isActionLoading) {
+                    console.log('[App] Auto-scan triggered start for:', scannedCode);
+                    executeStartPacking(scannedCode);
+                  }
+                }}
               />
             </div>
 
