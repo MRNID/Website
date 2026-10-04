@@ -12,6 +12,7 @@ import { api, UserSession, StationInfo } from './services/api';
 import { useBarcodeScanner } from './hooks/useBarcodeScanner';
 import { useStationWebSocket } from './hooks/useStationWebSocket';
 import { sounds } from './utils/audio';
+import { soundEffects } from './utils/audioFeedback';
 
 export default function App() {
   // Session & User
@@ -34,6 +35,8 @@ export default function App() {
   const [orderCode, setOrderCode] = useState<string | null>(null);
   const [orderPlatform, setOrderPlatform] = useState<string | null>(null);
   const [checkedItems, setCheckedItems] = useState<Record<number, boolean>>({});
+  const [scannedItemCounts, setScannedItemCounts] = useState<Record<number, number>>({});
+  const [lastScannedAlert, setLastScannedAlert] = useState<{ type: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
   const [isSeedingOrders, setIsSeedingOrders] = useState<boolean>(false);
 
@@ -163,6 +166,8 @@ export default function App() {
               setOrderCode('');
               setCurrentCustomer(null);
               setCheckedItems({});
+              setScannedItemCounts({});
+              setLastScannedAlert(null);
               setSessionId(null);
               setCompletedHash(null);
               setCompletedDuration(null);
@@ -215,6 +220,8 @@ export default function App() {
       setOrderCode(validation.orderCode || cleanCode);
       setOrderPlatform(validation.platform || 'SPX');
       setCheckedItems({});
+      setScannedItemCounts({});
+      setLastScannedAlert(null);
 
       // Initiate session
       sounds.playScanSuccess();
@@ -236,6 +243,68 @@ export default function App() {
       setSessionState('FAILED');
     } finally {
       setIsActionLoading(false);
+    }
+  };
+
+  // Scan-to-Count and Item Verification handler
+  const handleScanProductSku = (rawScannedCode: string) => {
+    if (!currentCustomer || !currentCustomer.items || currentCustomer.items.length === 0) {
+      soundEffects.playErrorBuzz();
+      return;
+    }
+
+    const code = rawScannedCode.trim().toUpperCase();
+    const items = currentCustomer.items;
+
+    // Check if the scanned code matches any item SKU or name
+    const matchIdx = items.findIndex((it: any) => {
+      const sku = (it.sku || '').trim().toUpperCase();
+      return sku === code || code.includes(sku) || sku.includes(code);
+    });
+
+    if (matchIdx !== -1) {
+      // MATCHED PRODUCT IN ORDER!
+      const current = scannedItemCounts[matchIdx] || 0;
+      const next = current + 1;
+      const targetQty = items[matchIdx].quantity;
+      const newCounts = { ...scannedItemCounts, [matchIdx]: next };
+      setScannedItemCounts(newCounts);
+
+      if (next <= targetQty) {
+        if (next === targetQty) {
+          setCheckedItems((prev) => ({ ...prev, [matchIdx]: true }));
+        }
+
+        // Check if all items are fully packed
+        const allPacked = items.every((it: any, idx: number) => (newCounts[idx] || 0) >= it.quantity);
+        if (allPacked) {
+          soundEffects.playAllItemsPackedSound();
+          setLastScannedAlert({
+            type: 'success',
+            message: `🎉 ĐÃ ĐẾM ĐỦ 100% SẢN PHẨM! BẤM [SPACE / F4] ĐỂ HOÀN TẤT`
+          });
+        } else {
+          soundEffects.playSuccessBeep();
+          setLastScannedAlert({
+            type: 'success',
+            message: `✓ ĐÃ ĐẾM: ${items[matchIdx].name} (${next}/${targetQty} cái)`
+          });
+        }
+      } else {
+        // Scanned more than required quantity
+        soundEffects.playErrorBuzz();
+        setLastScannedAlert({
+          type: 'warning',
+          message: `⚠️ CẢNH BÁO THỪA: ${items[matchIdx].name} chỉ cần ${targetQty} cái (đã quét ${next})!`
+        });
+      }
+    } else {
+      // WRONG PRODUCT / NOT IN THIS ORDER!
+      soundEffects.playWrongItemAlarm();
+      setLastScannedAlert({
+        type: 'error',
+        message: `❌ CẢNH BÁO ĐÓNG NHẦM HÀNG: Mã "${code}" KHÔNG CÓ TRONG ĐƠN NÀY!`
+      });
     }
   };
 
@@ -262,6 +331,8 @@ export default function App() {
       setTrackingCode('');
       setTrackingInput('');
       setCurrentCustomer(null);
+      setScannedItemCounts({});
+      setLastScannedAlert(null);
       return;
     }
 
@@ -272,6 +343,8 @@ export default function App() {
       setTrackingCode('');
       setTrackingInput('');
       setCurrentCustomer(null);
+      setScannedItemCounts({});
+      setLastScannedAlert(null);
       setElapsedSeconds(0);
       loadRecentHistory();
       loadOrdersQueue();
@@ -300,10 +373,8 @@ export default function App() {
   useBarcodeScanner({
     onScan: (scannedCode) => {
       console.log('[Scanner HID] Scanned barcode:', scannedCode);
-      // If currently recording, do not accidentally overwrite without confirmation
       if (sessionState === 'RECORDING') {
-        sounds.playErrorBuzz();
-        alert(`Bạn đang quay kiện hàng ${trackingCode}! Hãy hoàn tất hoặc hủy trước khi quét mã mới.`);
+        handleScanProductSku(scannedCode);
         return;
       }
       executeStartPacking(scannedCode);
@@ -398,7 +469,10 @@ export default function App() {
                 autoScanEnabled={autoScanEnabled}
                 onToggleAutoScan={() => setAutoScanEnabled((prev) => !prev)}
                 onAutoScanBarcode={(scannedCode) => {
-                  if (sessionState === 'IDLE' && !isActionLoading) {
+                  if (sessionState === 'RECORDING') {
+                    console.log('[App] Auto-scan detected SKU during recording:', scannedCode);
+                    handleScanProductSku(scannedCode);
+                  } else if ((sessionState === 'IDLE' || sessionState === 'COMPLETED') && !isActionLoading) {
                     console.log('[App] Auto-scan triggered start for:', scannedCode);
                     executeStartPacking(scannedCode);
                   }
@@ -421,6 +495,9 @@ export default function App() {
               onSeedOrders={handleSeedOrders}
               isSeeding={isSeedingOrders}
               isRecording={sessionState === 'RECORDING' || sessionState === 'PROCESSING'}
+              scannedCounts={scannedItemCounts}
+              onSimulateScanSku={handleScanProductSku}
+              lastScannedAlert={lastScannedAlert}
             />
           </div>
 

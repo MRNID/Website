@@ -18,7 +18,7 @@ class CameraBarcodeScanner {
   private isScanning = false;
   private lastScannedCode: string | null = null;
   private lastScannedTime = 0;
-  private cooldownMs = 3500; // Prevent spamming same barcode
+  private cooldownMs = 1200; // 1.2s cooldown to allow consecutive scanning of same SKU
 
   constructor() {
     this.zxingReader = new BrowserMultiFormatReader();

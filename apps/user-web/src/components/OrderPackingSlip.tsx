@@ -28,6 +28,9 @@ interface OrderPackingSlipProps {
   onSeedOrders: () => void;
   isSeeding?: boolean;
   isRecording: boolean;
+  scannedCounts?: Record<number, number>;
+  onSimulateScanSku?: (sku: string) => void;
+  lastScannedAlert?: { type: 'success' | 'warning' | 'error'; message: string } | null;
 }
 
 export const OrderPackingSlip: React.FC<OrderPackingSlipProps> = ({
@@ -41,21 +44,28 @@ export const OrderPackingSlip: React.FC<OrderPackingSlipProps> = ({
   onSelectPendingOrder,
   onSeedOrders,
   isSeeding,
-  isRecording
+  isRecording,
+  scannedCounts = {},
+  onSimulateScanSku,
+  lastScannedAlert
 }) => {
   // If we have an active order being packed
   if (trackingCode && customer) {
     const items = customer.items || [];
     const totalItems = items.reduce((acc, it) => acc + (it.quantity || 1), 0);
-    const checkedCount = items.filter((_, idx) => checkedItems[idx]).length;
+    const totalScanned = items.reduce((acc, _, idx) => acc + (scannedCounts[idx] || (checkedItems[idx] ? items[idx].quantity : 0)), 0);
+    const checkedCount = items.filter((_, idx) => checkedItems[idx] || (scannedCounts[idx] || 0) >= items[idx].quantity).length;
+    const isAllPacked = checkedCount === items.length && items.length > 0;
 
     return (
       <div className="bg-slate-800/95 border border-slate-700 rounded-2xl p-4 shadow-xl space-y-3">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-700/80 pb-2.5">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center">
-              <ShoppingBag className="w-4 h-4 text-emerald-400" />
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+              isAllPacked ? 'bg-emerald-600/30 border-emerald-500' : 'bg-blue-600/20 border-blue-500/30'
+            }`}>
+              <ShoppingBag className={`w-4 h-4 ${isAllPacked ? 'text-emerald-300' : 'text-blue-400'}`} />
             </div>
             <div>
               <span className="text-xs font-black text-white uppercase tracking-wider block">
@@ -68,12 +78,39 @@ export const OrderPackingSlip: React.FC<OrderPackingSlipProps> = ({
           </div>
 
           <div className="text-right">
-            <span className="text-[10px] text-slate-400 block">Tiến độ kiểm hàng:</span>
-            <span className={`text-xs font-black ${checkedCount === items.length ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {checkedCount} / {items.length} món ({totalItems} cái)
+            <span className="text-[10px] text-slate-400 block">Tiến độ đếm sản phẩm:</span>
+            <span className={`text-xs font-black ${isAllPacked ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {totalScanned} / {totalItems} cái ({checkedCount}/{items.length} món)
             </span>
           </div>
         </div>
+
+        {/* Real-time Scan Alert Banner */}
+        {lastScannedAlert ? (
+          <div className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between transition animate-pulse ${
+            lastScannedAlert.type === 'error'
+              ? 'bg-rose-950/80 border-rose-600 text-rose-200'
+              : lastScannedAlert.type === 'warning'
+              ? 'bg-amber-950/80 border-amber-600 text-amber-200'
+              : 'bg-emerald-950/80 border-emerald-600 text-emerald-200'
+          }`}>
+            <span>{lastScannedAlert.message}</span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/40">SCAN-TO-COUNT</span>
+          </div>
+        ) : isAllPacked ? (
+          <div className="p-2.5 rounded-xl border border-emerald-500/80 bg-emerald-950/60 text-emerald-200 text-xs font-black flex items-center justify-between">
+            <span>🎉 ĐÃ ĐẾM ĐỦ 100% SẢN PHẨM! BẤM [SPACE / F4] ĐỂ HOÀN TẤT VÀ NIÊM PHONG</span>
+            <span className="px-2 py-0.5 rounded bg-emerald-600 text-slate-950 text-[10px] uppercase font-black">XÁC THỰC XONG</span>
+          </div>
+        ) : (
+          <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-700/60 text-[11px] text-slate-300 flex items-center justify-between">
+            <div className="flex items-center space-x-1.5">
+              <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+              <span>Quét mã vạch sản phẩm (SKU) để hệ thống tự động đếm số lượng</span>
+            </div>
+            <span className="text-[10px] text-slate-400 font-mono">Chống đóng nhầm hàng</span>
+          </div>
+        )}
 
         {/* Customer Info row */}
         <div className="grid grid-cols-2 gap-2 text-xs bg-slate-900/80 p-2.5 rounded-xl border border-slate-700/60">
@@ -97,45 +134,89 @@ export const OrderPackingSlip: React.FC<OrderPackingSlipProps> = ({
           )}
         </div>
 
-        {/* Items Checklist Table */}
+        {/* Items Checklist Table with Scan-to-Count */}
         <div className="space-y-1.5">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Danh sách sản phẩm cần cho vào hộp (Checklist):
-          </span>
+          <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            <span>Sản phẩm cần kiểm & đóng gói:</span>
+            <span>Trạng thái đếm</span>
+          </div>
 
-          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
             {items.map((item, idx) => {
-              const isChecked = Boolean(checkedItems[idx]);
+              const currentCount = scannedCounts[idx] || 0;
+              const isFull = currentCount >= item.quantity;
+              const isChecked = Boolean(checkedItems[idx]) || isFull;
+
               return (
                 <div
                   key={idx}
-                  onClick={() => onToggleItem(idx)}
-                  className={`p-2 rounded-xl border transition cursor-pointer flex items-center justify-between text-xs ${
-                    isChecked
-                      ? 'bg-emerald-950/40 border-emerald-600/60 text-slate-200'
-                      : 'bg-slate-900/60 border-slate-700/80 text-slate-300 hover:border-slate-600'
+                  className={`p-2.5 rounded-xl border transition flex flex-col space-y-1.5 ${
+                    isFull
+                      ? 'bg-emerald-950/40 border-emerald-600/70 shadow-sm'
+                      : currentCount > 0
+                      ? 'bg-amber-950/30 border-amber-600/60'
+                      : 'bg-slate-900/70 border-slate-700/80 text-slate-300'
                   }`}
                 >
-                  <div className="flex items-center space-x-2.5">
-                    {isChecked ? (
-                      <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" />
-                    ) : (
-                      <Square className="w-4 h-4 text-slate-500 shrink-0" />
-                    )}
-                    <div>
-                      <span className={`font-semibold block leading-tight ${isChecked ? 'line-through text-slate-400' : 'text-white'}`}>
-                        {item.name}
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center space-x-2.5">
+                      <button
+                        type="button"
+                        onClick={() => onToggleItem(idx)}
+                        className="cursor-pointer text-slate-400 hover:text-white transition"
+                        title="Bấm để tích thủ công nếu không quét mã"
+                      >
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-500 shrink-0" />
+                        )}
+                      </button>
+
+                      <div>
+                        <span className={`font-semibold block leading-tight ${isFull ? 'text-emerald-200' : 'text-white'}`}>
+                          {item.name}
+                        </span>
+                        <div className="flex items-center space-x-2 text-[10px] text-slate-400 font-mono mt-0.5">
+                          <span>MÃ SKU: <strong className="text-amber-300 font-bold">{item.sku}</strong></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2 shrink-0">
+                      {/* Interactive Count Status Badge */}
+                      <span className={`text-xs font-black px-2.5 py-1 rounded-lg border font-mono ${
+                        isFull
+                          ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                          : currentCount > 0
+                          ? 'bg-amber-600/30 border-amber-500 text-amber-300 animate-pulse'
+                          : 'bg-slate-800 border-slate-700 text-slate-400'
+                      }`}>
+                        {currentCount} / {item.quantity} {isFull ? '✓ ĐỦ' : 'CÁI'}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        SKU: <strong className="text-slate-300">{item.sku}</strong>
-                      </span>
+
+                      {/* Quick Simulate Scan Button */}
+                      {onSimulateScanSku && !isFull && (
+                        <button
+                          type="button"
+                          onClick={() => onSimulateScanSku(item.sku)}
+                          className="px-2 py-1 bg-blue-600/40 hover:bg-blue-600 border border-blue-500 text-blue-200 rounded text-[10px] font-bold transition cursor-pointer"
+                          title={`Bấm để giả lập quét mã SKU: ${item.sku}`}
+                        >
+                          +1 Quét
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <div className="text-right pl-3 shrink-0">
-                    <span className="text-xs font-black text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-800">
-                      SL: {item.quantity}
-                    </span>
+                  {/* Quantity Progress Bar */}
+                  <div className="w-full bg-slate-950/80 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 rounded-full ${
+                        isFull ? 'bg-emerald-500' : currentCount > 0 ? 'bg-amber-400' : 'bg-slate-700'
+                      }`}
+                      style={{ width: `${Math.min(100, (currentCount / item.quantity) * 100)}%` }}
+                    />
                   </div>
                 </div>
               );

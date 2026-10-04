@@ -55,7 +55,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
   // Hands-free Camera Barcode Scanner Loop
   useEffect(() => {
-    if (!autoScanEnabled || (state !== 'IDLE' && state !== 'COMPLETED') || streamError) return;
+    if (!autoScanEnabled || streamError) return;
 
     let active = true;
     let isDecoding = false;
@@ -274,10 +274,14 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
       </div>
 
       {/* Top Center: Auto-scan prompt when active */}
-      {autoScanEnabled && (state === 'IDLE' || state === 'COMPLETED') && !streamError && (
+      {autoScanEnabled && !streamError && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 hidden md:flex items-center space-x-1.5 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-emerald-500/30 text-[11px] text-emerald-300 font-medium z-10">
           <ScanLine className="w-3 h-3 text-emerald-400" />
-          <span>Đưa mã vận đơn vào khung camera để tự động đóng đơn</span>
+          <span>
+            {state === 'RECORDING'
+              ? 'Đưa mã SKU sản phẩm vào camera để tự động đếm'
+              : 'Đưa mã vận đơn vào khung camera để tự động đóng đơn'}
+          </span>
         </div>
       )}
 
