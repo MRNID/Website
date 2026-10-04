@@ -21,12 +21,18 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [timecode, setTimecode] = useState('');
-  const [hasLiveStream, setHasLiveStream] = useState(true);
+  const [streamError, setStreamError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
-  // Reset live stream check whenever stationId changes
+  // Auto retry stream every 3s if it encounters an error
   useEffect(() => {
-    setHasLiveStream(true);
-  }, [stationId]);
+    if (!streamError) return;
+    const timer = setTimeout(() => {
+      setStreamError(false);
+      setRetryCount((prev) => prev + 1);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [streamError]);
 
   // Live millisecond timecode clock
   useEffect(() => {
@@ -50,7 +56,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
     const render = () => {
       tick++;
 
-      if (hasLiveStream) {
+      if (!streamError) {
         // Transparent clear so real camera video shows through
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       } else {
@@ -131,7 +137,7 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [state, hasLiveStream]);
+  }, [state, streamError]);
 
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -142,12 +148,15 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
   return (
     <div className="relative w-full h-full min-h-[360px] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center">
       {/* Real Live Camera Video Stream */}
-      {stationId && hasLiveStream ? (
+      {stationId && !streamError ? (
         <img
-          key={stationId}
-          src={`http://localhost:4000/api/v1/stations/${stationId}/live-preview`}
+          key={`${stationId}_${retryCount}`}
+          src={`http://localhost:4000/api/v1/stations/${stationId}/live-preview?t=${retryCount}`}
           alt="Live Camera Feed"
-          onError={() => setHasLiveStream(false)}
+          onError={() => {
+            console.warn('Live camera stream disconnected, retrying in 3s...');
+            setStreamError(true);
+          }}
           className="absolute inset-0 w-full h-full object-cover"
         />
       ) : null}
@@ -166,6 +175,15 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
         <span>{stationCode}</span>
         <span className="text-slate-500">•</span>
         <span className="text-slate-300">{cameraName}</span>
+        {!streamError && (
+          <>
+            <span className="text-slate-500">•</span>
+            <span className="flex items-center space-x-1 text-emerald-400 text-[10px] font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>LIVE</span>
+            </span>
+          </>
+        )}
       </div>
 
       {/* Top Right: REC Indicator + Millisecond timecode */}
@@ -181,17 +199,17 @@ export const CameraViewport: React.FC<CameraViewportProps> = ({
         </div>
       </div>
 
-      {/* Center Guidance text when IDLE */}
-      {state === 'IDLE' && (
+      {/* Center Guidance text ONLY when offline or simulation */}
+      {streamError && state === 'IDLE' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <div className="p-4 rounded-full bg-blue-500/10 border border-blue-500/20 mb-3">
-            <Video className="w-8 h-8 text-blue-400" />
+          <div className="p-4 rounded-full bg-amber-500/10 border border-amber-500/20 mb-3">
+            <Video className="w-8 h-8 text-amber-400" />
           </div>
           <span className="text-sm font-semibold text-slate-300">
-            KHU VỰC ĐÓNG HÀNG & QUAY VIDEO
+            ĐANG KẾT NỐI CAMERA DAHUA...
           </span>
           <span className="text-xs text-slate-500 mt-1">
-            Đặt kiện hàng vào khung giới hạn trước khi quét mã
+            Đang tải luồng hình ảnh trực tiếp từ trạm {stationCode}
           </span>
         </div>
       )}

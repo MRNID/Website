@@ -366,7 +366,7 @@ export async function packingRoutes(app: FastifyInstance) {
 
     reply.hijack();
     reply.raw.writeHead(200, {
-      'Content-Type': 'multipart/x-mixed-replace; boundary=ffserver',
+      'Content-Type': 'multipart/x-mixed-replace; boundary=ffmpeg',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Connection': 'close',
       'Pragma': 'no-cache',
@@ -378,6 +378,7 @@ export async function packingRoutes(app: FastifyInstance) {
       '-timeout', '5000000',
       '-i', camera.rtspUrl,
       '-f', 'mpjpeg',
+      '-boundary_tag', 'ffmpeg',
       '-q:v', '5',
       '-r', '15',
       '-s', '960x540',
@@ -396,6 +397,41 @@ export async function packingRoutes(app: FastifyInstance) {
     request.raw.on('error', cleanup);
     reply.raw.on('close', cleanup);
     reply.raw.on('error', cleanup);
+  });
+
+  // 8.4 Single Camera JPEG Snapshot for low-bandwidth fallback
+  app.get('/api/v1/stations/:id/snapshot', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const camera = await DatabaseRepository.findCameraByStationId(id);
+
+    if (!camera || !camera.rtspUrl || camera.rtspUrl.includes('mock')) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NO_LIVE_STREAM', message: 'No live RTSP camera attached to this station' }
+      });
+    }
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    const proc = spawn(config.ffmpegPath, [
+      '-rtsp_transport', 'tcp',
+      '-timeout', '5000000',
+      '-i', camera.rtspUrl,
+      '-vframes', '1',
+      '-f', 'image2',
+      '-q:v', '3',
+      'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+    proc.stdout.pipe(reply.raw);
+    request.raw.on('close', () => {
+      try { proc.kill(); } catch {}
+    });
   });
 
   // 9. Station recent sessions (today's history)
