@@ -25,7 +25,7 @@ class CameraBarcodeScanner {
     if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
       try {
         this.nativeDetector = new (window as any).BarcodeDetector({
-          formats: ['code_128', 'code_39', 'qr_code', 'ean_13', 'itf', 'data_matrix', 'upc_a', 'upc_e']
+          formats: ['code_128', 'qr_code', 'ean_13', 'data_matrix']
         });
       } catch (e) {
         console.warn('Native BarcodeDetector initialization fallback to ZXing:', e);
@@ -144,7 +144,13 @@ class CameraBarcodeScanner {
       if (!rawText) return null;
 
       const cleaned = rawText.trim().toUpperCase();
-      if (cleaned.length < 5 || cleaned.length > 45) return null;
+      // Shipping codes in VN are usually >= 8 chars (SPXVN, GHTK, GHN, JT, TikTok, Lazada)
+      if (cleaned.length < 8 || cleaned.length > 45) return null;
+
+      // Reject purely short numeric noise (e.g. 5-9 digit random numbers from background textures)
+      if (/^\d{1,9}$/.test(cleaned)) {
+        return null;
+      }
 
       // Detect carrier pattern
       let carrier = 'OTHER';

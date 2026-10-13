@@ -35,6 +35,7 @@ export interface DisputeUpdateRequest {
 }
 
 export interface VideoSearchParams {
+  businessId?: string;
   trackingCode?: string;
   orderCode?: string;
   startDate?: string;

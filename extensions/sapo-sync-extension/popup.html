@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sapo Packing Sync</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      width: 360px;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+    }
+    .logo-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .logo-badge {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 14px;
+    }
+    h1 {
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .subtitle {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      background: #1e293b;
+      color: #94a3b8;
+    }
+    .status-badge.online {
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .form-group {
+      margin-bottom: 10px;
+    }
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      color: #cbd5e1;
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      background: #090d16;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: #f1f5f9;
+      outline: none;
+    }
+    input[type="text"]:focus {
+      border-color: #3b82f6;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 800;
+      color: #38bdf8;
+    }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+    }
+    .toggle-label {
+      font-size: 12px;
+      color: #e2e8f0;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #475569;
+      transition: .2s;
+      border-radius: 20px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #3b82f6;
+    }
+    input:checked + .slider:before {
+      transform: translateX(16px);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #4f46e5);
+      color: white;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #1d4ed8, #4338ca);
+    }
+    .btn-secondary {
+      background: #334155;
+      color: #e2e8f0;
+      margin-top: 8px;
+    }
+    .btn-secondary:hover {
+      background: #475569;
+    }
+
+    .alert {
+      font-size: 11px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      display: none;
+    }
+    .alert-success {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+    }
+    .alert-error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+    }
+
+    .footer {
+      font-size: 10px;
+      color: #64748b;
+      text-align: center;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-title">
+      <div class="logo-badge">📦</div>
+      <div>
+        <h1>Sapo Packing Sync</h1>
+        <div class="subtitle">Đồng bộ đơn hàng & SKU tự động</div>
+      </div>
+    </div>
+    <div id="statusBadge" class="status-badge">
+      <span class="dot"></span>
+      <span id="statusText">Kiểm tra...</span>
+    </div>
+  </div>
+
+  <div id="alertBox" class="alert"></div>
+
+  <!-- Stats Card -->
+  <div class="card">
+    <div class="stat-row">
+      <div>
+        <div class="card-title">ĐÃ ĐỒNG BỘ HÔM NAY</div>
+        <div style="font-size: 11px; color: #94a3b8;">Đơn hàng sẵn sàng đóng gói</div>
+      </div>
+      <div id="syncedCount" class="stat-value">0</div>
+    </div>
+  </div>
+
+  <!-- Settings Card -->
+  <div class="card">
+    <div class="card-title">CẤU HÌNH KẾT NỐI</div>
+    <div class="form-group">
+      <label>Địa chỉ Server Video Đóng Gói:</label>
+      <input type="text" id="serverUrl" value="http://localhost:4000" placeholder="http://localhost:4000">
+    </div>
+
+    <div style="margin-top: 10px; border-top: 1px solid #334155; padding-top: 10px;">
+      <div class="toggle-row">
+        <span class="toggle-label">Tự động bắt khi bấm IN ĐƠN</span>
+        <label class="switch">
+          <input type="checkbox" id="autoSyncPrint" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row" style="margin-top: 6px;">
+        <span class="toggle-label">Hiện nút nổi đồng bộ trên Sapo</span>
+        <label class="switch">
+          <input type="checkbox" id="showFloatingButton" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Buttons -->
+  <button id="btnSyncCurrentPage" class="btn btn-primary" style="padding: 12px; font-size: 13px;">
+    🚀 ĐỒNG BỘ ĐƠN HÀNG TRÊN TRANG SAPO NÀY
+  </button>
+  <button id="btnSendTest" class="btn btn-secondary" style="font-size: 11px; opacity: 0.75;">
+    🧪 Tạo đơn thử nghiệm Shanam (Chỉ dùng khi cần test máy)
+  </button>
+
+  <div class="footer">
+    Hoạt động trên *.mysapo.net & *.pos.sapo.vn<br>
+    Hệ thống Video Đóng Gói Hàng Fulfillment
+  </div>
+
+  <script src="connection.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

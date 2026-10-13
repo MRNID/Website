@@ -1,9 +1,23 @@
 import ffmpegStatic from 'ffmpeg-static';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+// Load before evaluating configuration, including when started from apps/backend-api.
+const envPath = existsSync('.env') ? '.env' : fileURLToPath(new URL('../../../.env', import.meta.url));
+if (existsSync(envPath)) process.loadEnvFile(envPath);
+
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret || jwtSecret.length < 32 || [
+  'packing-video-proof-super-secure-jwt-secret-key-32chars',
+  'super-secret-jwt-key-minimum-32-chars-length!'
+].includes(jwtSecret)) {
+  throw new Error('JWT_SECRET must be a private, randomly generated secret of at least 32 characters.');
+}
 
 export const config = {
   port: Number(process.env.PORT) || 4000,
   host: process.env.HOST || '0.0.0.0',
-  jwtSecret: process.env.JWT_SECRET || 'packing-video-proof-super-secure-jwt-secret-key-32chars',
+  jwtSecret,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '8h',
   refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
   ffmpegPath: process.env.FFMPEG_PATH || (ffmpegStatic as unknown as string) || 'ffmpeg',
@@ -15,4 +29,3 @@ export const config = {
     instanceName: process.env.DB_INSTANCE || 'SQLEXPRESS'
   }
 };
-

@@ -12,6 +12,11 @@ export const VideoSearchPage: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<VideoRecord | null>(null);
+  const [linkError, setLinkError] = useState('');
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('videoId');
+    if (id) adminApi.getVideoDetail(id).then(setSelectedVideo).catch(error => setLinkError(error.message));
+  }, []);
 
   const fetchVideos = useCallback(async () => {
     setLoading(true);
@@ -46,6 +51,7 @@ export const VideoSearchPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {linkError && <p role="alert" className="text-rose-300 text-sm">{linkError}</p>}
       {/* Title */}
       <div className="flex items-center justify-between">
         <div>

@@ -9,13 +9,15 @@
   ],
   "scripts": {
     "build": "pnpm -r build",
-    "test": "node --test packages/shared-utils/dist/barcode-validator.test.js",
+    "test": "node --test packages/shared-utils/dist/barcode-validator.test.js packages/shared-utils/dist/station-sync.test.js scripts/readiness-regression.test.mjs scripts/customer-storage.test.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
     "test:validation": "node scripts/test-full-validation.mjs",
     "start:backend": "pnpm --filter @packing-proof/backend-api start",
     "start:worker": "pnpm --filter @packing-proof/video-worker start",
     "start:user": "pnpm --filter @packing-proof/user-web dev",
-    "start:admin": "pnpm --filter @packing-proof/admin-web dev"
+    "start:admin": "pnpm --filter @packing-proof/admin-web dev",
+    "storage:migrate": "node scripts/migrate-customer-storage.mjs --apply",
+    "storage:provision": "node scripts/provision-worker.mjs"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

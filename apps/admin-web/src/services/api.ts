@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:4000/api/v1';
+import { API_BASE } from './endpoints';
 
 export interface AdminUser {
   id: string;
@@ -6,6 +6,8 @@ export interface AdminUser {
   fullName: string;
   role: string;
   warehouseId?: string;
+  businessId?: string;
+  businessName?: string;
   accessToken: string;
 }
 
@@ -19,6 +21,9 @@ export interface VideoRecord {
   sha256: string;
   thumbnail_path?: string;
   sync_status: string;
+  sync_error?: string;
+  storage_owner?: string;
+  drive_file_id?: string;
   is_locked: boolean;
   dispute_status: 'NONE' | 'UNDER_REVIEW' | 'SUBMITTED_TO_CARRIER' | 'WON' | 'LOST';
   created_at: string;
@@ -38,12 +43,140 @@ export interface DashboardStats {
   onlineStations: number;
 }
 
+export interface LogisticsDashboardData {
+  summary: {
+    totalOrders: number;
+    completedOrders: number;
+    recordingOrders: number;
+    pendingOrders: number;
+    disputedOrders: number;
+    fulfillmentRate: number;
+    avgDurationSeconds: number;
+    minDurationSeconds: number;
+    maxDurationSeconds: number;
+    totalPackingMinutes: number;
+  };
+  hourlyThroughput: Array<{
+    hour: number;
+    hourLabel: string;
+    orderCount: number;
+    avgDuration: number;
+  }>;
+  operatorLeaderboard: Array<{
+    rank: number;
+    userId: string;
+    operatorName: string;
+    packedCount: number;
+    avgDuration: number;
+    disputeCount: number;
+    accuracyRate: number;
+  }>;
+  platformBreakdown: Array<{
+    platform: string;
+    totalCount: number;
+    packedCount: number;
+    percentage: number;
+  }>;
+  stationProductivity: Array<{
+    id: string;
+    code: string;
+    name: string;
+    status: string;
+    sessionCount: number;
+    avgDuration: number;
+  }>;
+  timeRange: 'today' | '7days' | '30days';
+}
+
 export interface HashVerifyResult {
   videoId: string;
   dbHash: string;
   calculatedHash: string;
   isMatch: boolean;
   verifiedAt: string;
+}
+
+export interface TenantRecord {
+  id: string;
+  name: string;
+  code: string;
+  apiKey?: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  planTier: 'STARTER' | 'PRO' | 'BUSINESS' | 'ENTERPRISE';
+  monthlyOrderLimit: number;
+  maxStations: number;
+  retentionDays: number;
+  subscriptionStatus: 'ACTIVE' | 'TRIAL' | 'SUSPENDED' | 'EXPIRED';
+  subscriptionExpiresAt?: string;
+  daysRemaining: number;
+  pricePerMonth: number;
+  notes?: string;
+  isActive: boolean;
+  createdAt: string;
+  usage: {
+    ordersThisMonth: number;
+    monthlyOrderLimit: number;
+    usagePercent: number;
+    stationCount: number;
+    maxStations: number;
+    totalOrders: number;
+    totalVideos: number;
+    totalVideoBytes: number;
+  };
+}
+
+export interface TenantStats {
+  totalTenants: number;
+  activeTenants: number;
+  expiredTenants: number;
+  totalMrr: number;
+  totalOrdersThisMonth: number;
+  totalVideoStorageBytes: number;
+}
+
+export interface TenantQuotaStatus {
+  isAllowed: boolean;
+  reason?: string;
+  planTier: string;
+  monthlyOrderLimit: number;
+  ordersThisMonth: number;
+  usagePercent: number;
+  subscriptionStatus: string;
+}
+
+export interface StaffUser {
+  id: string;
+  businessId: string;
+  businessName: string;
+  businessCode: string;
+  warehouseId: string;
+  warehouseName: string;
+  warehouseCode: string;
+  username: string;
+  fullName: string;
+  email: string;
+  phone?: string;
+  roleId: string;
+  roleName: string;
+  roleDescription?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  stats?: {
+    totalPacked: number;
+    packedToday: number;
+  };
+}
+
+export interface RoleRecord {
+  id: string;
+  businessId: string;
+  name: string;
+  description: string;
+  permissions: string[];
+  createdAt: string;
 }
 
 class AdminApiService {
@@ -64,9 +197,12 @@ class AdminApiService {
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       ...(options.headers as any),
     };
+
+    if (options.body) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
@@ -111,8 +247,17 @@ class AdminApiService {
     return this.request('/admin/dashboard');
   }
 
-  async getStations(): Promise<any[]> {
-    return this.request('/stations');
+  async getStations(params?: { businessId?: string; warehouseId?: string }): Promise<any[]> {
+    const q = new URLSearchParams();
+    if (params?.businessId) q.append('businessId', params.businessId);
+    if (params?.warehouseId) q.append('warehouseId', params.warehouseId);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return this.request(`/stations${qs}`);
+  }
+
+  async getWarehouses(businessId?: string): Promise<any[]> {
+    const qs = businessId ? `?businessId=${businessId}` : '';
+    return this.request(`/admin/warehouses${qs}`);
   }
 
   async searchVideos(params: {
@@ -146,8 +291,20 @@ class AdminApiService {
     };
   }
 
-  getVideoStreamUrl(videoId: string): string {
-    return `${API_BASE}/videos/${videoId}/stream`;
+  getVideoShareUrl(videoId: string): string {
+    const url = new URL(window.location.origin);
+    url.searchParams.set('tab', 'videos');
+    url.searchParams.set('videoId', videoId);
+    return url.toString();
+  }
+
+  async getVideoDetail(videoId: string): Promise<VideoRecord> {
+    return this.request(`/videos/${encodeURIComponent(videoId)}`);
+  }
+
+  async getVideoPlayback(videoId: string): Promise<{ url: string; source: string }> {
+    const result = await this.request<{ ticket: string; source: string }>(`/videos/${encodeURIComponent(videoId)}/playback`, { method: 'POST' });
+    return { url: `${API_BASE}/videos/${encodeURIComponent(videoId)}/stream?ticket=${encodeURIComponent(result.ticket)}`, source: result.source };
   }
 
   async verifyVideoHash(videoId: string): Promise<HashVerifyResult> {
@@ -215,9 +372,15 @@ class AdminApiService {
     });
   }
 
-  async getOrders(params?: { search?: string }): Promise<any[]> {
+  async getLogisticsDashboardStats(timeRange: 'today' | '7days' | '30days' = 'today'): Promise<LogisticsDashboardData> {
+    return this.request(`/admin/logistics-dashboard?timeRange=${timeRange}`);
+  }
+
+  async getOrders(params?: { search?: string; status?: string; platform?: string }): Promise<any[]> {
     const query = new URLSearchParams();
     if (params?.search) query.append('search', params.search);
+    if (params?.status && params.status !== 'ALL') query.append('status', params.status);
+    if (params?.platform && params.platform !== 'ALL') query.append('platform', params.platform);
     return this.request(`/orders?${query.toString()}`);
   }
 
@@ -227,6 +390,13 @@ class AdminApiService {
 
   async deleteOrder(orderId: string): Promise<any> {
     return this.request(`/orders/${orderId}`, { method: 'DELETE' });
+  }
+
+  async manualCompleteOrder(orderId: string, reason?: string): Promise<any> {
+    return this.request(`/orders/${orderId}/manual-complete`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
   }
 
   async purgeOrders(): Promise<any> {
@@ -263,6 +433,146 @@ class AdminApiService {
       method: 'POST',
       body: JSON.stringify({ retentionDays })
     });
+  }
+
+  // --- MULTI-TENANT & SUBSCRIPTION SAAS METHODS ---
+
+  async getTenants(search?: string): Promise<TenantRecord[]> {
+    const query = new URLSearchParams();
+    if (search) query.append('search', search);
+    return this.request(`/admin/tenants?${query.toString()}`);
+  }
+
+  async getTenantStats(): Promise<TenantStats> {
+    return this.request('/admin/tenants/stats');
+  }
+
+  async getMyQuota(): Promise<TenantQuotaStatus> {
+    return this.request('/admin/tenants/my-quota');
+  }
+
+  async getTenantById(id: string): Promise<any> {
+    return this.request(`/admin/tenants/${id}`);
+  }
+
+  async createTenant(data: any): Promise<any> {
+    return this.request('/admin/tenants', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async updateTenant(id: string, data: any): Promise<any> {
+    return this.request(`/admin/tenants/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async renewTenant(id: string, months: number = 1): Promise<any> {
+    return this.request(`/admin/tenants/${id}/renew`, {
+      method: 'POST',
+      body: JSON.stringify({ months })
+    });
+  }
+
+  async rotateTenantApiKey(id: string): Promise<{ apiKey: string; message: string }> {
+    return this.request(`/admin/tenants/${id}/rotate-api-key`, {
+      method: 'POST'
+    });
+  }
+
+  async getStaffUsers(params?: { businessId?: string; warehouseId?: string; search?: string; roleName?: string }): Promise<StaffUser[]> {
+    const q = new URLSearchParams();
+    if (params?.businessId) q.append('businessId', params.businessId);
+    if (params?.warehouseId) q.append('warehouseId', params.warehouseId);
+    if (params?.search) q.append('search', params.search);
+    if (params?.roleName) q.append('roleName', params.roleName);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return this.request(`/admin/users${qs}`);
+  }
+
+  async getRoles(businessId?: string): Promise<RoleRecord[]> {
+    const qs = businessId ? `?businessId=${businessId}` : '';
+    return this.request(`/admin/roles${qs}`);
+  }
+
+  async createStaffUser(data: {
+    username: string;
+    password: string;
+    fullName: string;
+    email?: string;
+    phone?: string;
+    roleName?: string;
+    roleId?: string;
+    warehouseId?: string;
+    businessId?: string;
+  }): Promise<StaffUser> {
+    return this.request('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async updateStaffUser(id: string, data: {
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    roleId?: string;
+    warehouseId?: string;
+    isActive?: boolean;
+    password?: string;
+  }): Promise<StaffUser> {
+    return this.request(`/admin/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async toggleUserStatus(id: string, isActive: boolean): Promise<any> {
+    return this.request(`/admin/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isActive })
+    });
+  }
+
+  // Google Drive Cloud Storage Integration
+  async getGoogleDriveStatus(businessId: string): Promise<any> {
+    return this.request(`/businesses/${businessId}/google-drive`);
+  }
+
+  async disconnectGoogleDrive(businessId: string): Promise<any> {
+    return this.request(`/businesses/${businessId}/google-drive`, {
+      method: 'DELETE'
+    });
+  }
+
+  async testSyncGoogleDrive(businessId: string): Promise<any> {
+    return this.request(`/businesses/${businessId}/google-drive/test-sync`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+  }
+
+  async getGoogleAuthUrl(businessId: string): Promise<string> {
+    const res = await this.request<{ authUrl: string }>(`/auth/google/url?businessId=${businessId}`);
+    return res.authUrl;
+  }
+
+  // Camera PTZ / Zoom & Pan Control
+  async sendPtzCommand(data: {
+    ipAddress?: string;
+    action?: 'start' | 'stop';
+    code: 'Up' | 'Down' | 'Left' | 'Right' | 'ZoomWide' | 'ZoomTele';
+    arg1?: number;
+    arg2?: number;
+    arg3?: number;
+  }): Promise<{ message: string }> {
+    const res = await this.request<{ message: string }>('/admin/cameras/ptz-command', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    return res;
   }
 }
 

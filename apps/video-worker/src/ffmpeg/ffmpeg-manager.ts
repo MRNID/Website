@@ -60,7 +60,11 @@ export class FFmpegManager {
       ffmpegAvailable = false;
     }
 
-    const isMock = !ffmpegAvailable || !params.camera.url || params.camera.url.toLowerCase().includes('mock');
+    const isMock =
+      !ffmpegAvailable ||
+      !params.camera.url ||
+      params.camera.url.toLowerCase().includes('mock') ||
+      process.env.MOCK_CAMERA === 'true';
 
     if (isMock) {
       console.warn(`[FFmpegManager] Running in Simulation / Mock Mode (url: ${params.camera.url || 'none'}).`);
@@ -157,10 +161,25 @@ export class FFmpegManager {
 
     proc.on('close', (code) => {
       console.log(`[FFmpegManager] Ingestion process closed with code ${code}`);
+      if (!keyframeSent && code !== 0) {
+        console.warn(`[FFmpegManager] RTSP camera stream could not be reached (exit code ${code}). Falling back to Simulation / Mock Mode for local testing.`);
+        this.activeSession = {
+          sessionId: params.sessionId,
+          trackingCode: params.trackingCode,
+          stationCode: params.stationCode,
+          startTime: new Date(),
+          tempFmp4Path,
+          finalTmpPath,
+          isMock: true
+        };
+        fs.writeFileSync(tempFmp4Path, Buffer.from('MOCK_FMP4_HEADER_' + params.sessionId));
+        keyframeSent = true;
+        params.onFirstKeyframe(9999);
+      }
     });
   }
 
-  static async stopRecording(): Promise<{
+  static async stopRecording(targetSessionId?: string): Promise<{
     filename: string;
     localPath: string;
     duration: number;
@@ -170,6 +189,10 @@ export class FFmpegManager {
   }> {
     if (!this.activeSession) {
       throw new Error('No active recording session to stop');
+    }
+
+    if (targetSessionId && this.activeSession.sessionId !== targetSessionId) {
+      throw new Error(`SESSION_MISMATCH: Active recording session is ${this.activeSession.sessionId}, but received STOP command for ${targetSessionId}`);
     }
 
     const session = this.activeSession;
@@ -290,8 +313,12 @@ export class FFmpegManager {
     };
   }
 
-  static cancelRecording(): void {
-    if (!this.activeSession) return;
+  static cancelRecording(targetSessionId?: string): boolean {
+    if (!this.activeSession) return false;
+    if (targetSessionId && this.activeSession.sessionId !== targetSessionId) {
+      console.warn(`[FFmpegManager] Ignoring CANCEL command for session ${targetSessionId}: Active session is ${this.activeSession.sessionId}`);
+      return false;
+    }
     if (this.activeSession.timer) clearInterval(this.activeSession.timer);
     if (this.activeSession.process) {
       this.activeSession.process.kill('SIGKILL');
@@ -302,5 +329,6 @@ export class FFmpegManager {
       }
     } catch {}
     this.activeSession = null;
+    return true;
   }
 }

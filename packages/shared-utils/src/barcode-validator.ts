@@ -18,13 +18,21 @@ const CARRIER_PATTERNS: Array<{ platform: CarrierPlatform; regex: RegExp }> = [
 ];
 
 export function validateAndCleanBarcode(rawCode: string): BarcodeMatchResult {
-  const cleaned = rawCode.trim().toUpperCase();
-
-  if (cleaned.length < 6 || cleaned.length > 40) {
+  if (!rawCode || typeof rawCode !== 'string') {
     return {
       isValid: false,
       platform: 'OTHER',
-      cleanedCode: cleaned
+      cleanedCode: ''
+    };
+  }
+
+  const cleaned = rawCode.trim().toUpperCase();
+
+  if (!cleaned || cleaned.length < 6) {
+    return {
+      isValid: false,
+      platform: 'OTHER',
+      cleanedCode: ''
     };
   }
 
@@ -41,6 +49,6 @@ export function validateAndCleanBarcode(rawCode: string): BarcodeMatchResult {
   return {
     isValid: false,
     platform: 'OTHER',
-    cleanedCode: cleaned
+    cleanedCode: ''
   };
 }

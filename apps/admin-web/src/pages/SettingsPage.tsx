@@ -14,18 +14,27 @@ import {
   Edit3,
   HelpCircle,
   Activity,
-  Trash2
+  Trash2,
+  Sliders,
+  Building2,
+  Warehouse,
+  Filter,
+  Search
 } from 'lucide-react';
-import { adminApi } from '../services/api';
+import { adminApi, AdminUser } from '../services/api';
+import { CameraCalibrationModal } from '../components/CameraCalibrationModal';
 
-export const SettingsPage: React.FC = () => {
+interface SettingsPageProps {
+  user?: AdminUser;
+}
+
+export const SettingsPage: React.FC<SettingsPageProps> = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Storage Overview & Retention Cleanup
   const [storageOverview, setStorageOverview] = useState<any | null>(null);
-  const [isCleaning, setIsCleaning] = useState(false);
 
   // Storage Configs
   const [storageConfigs, setStorageConfigs] = useState<any[]>([]);
@@ -41,10 +50,18 @@ export const SettingsPage: React.FC = () => {
     camera_osd_watermark: 'true'
   });
 
+  // Multi-tenant & Warehouse filter states
+  const [tenants, setTenants] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [selectedBizId, setSelectedBizId] = useState<string>('ALL');
+  const [selectedWhId, setSelectedWhId] = useState<string>('ALL');
+  const [stationSearch, setStationSearch] = useState<string>('');
+
   // Stations List
   const [stations, setStations] = useState<any[]>([]);
   const [isAddStationOpen, setIsAddStationOpen] = useState(false);
   const [newStation, setNewStation] = useState({
+    warehouseId: '',
     code: '',
     name: '',
     computerName: '',
@@ -56,6 +73,7 @@ export const SettingsPage: React.FC = () => {
 
   // Editing Station/Camera state
   const [editingStation, setEditingStation] = useState<any | null>(null);
+  const [calibratingStation, setCalibratingStation] = useState<any | null>(null);
 
   // Camera connection test results: map of stationId/cameraId -> { testing, reachable, latencyMs, message }
   const [camTestStatus, setCamTestStatus] = useState<Record<string, { testing?: boolean; reachable?: boolean; latencyMs?: number; message?: string }>>({});
@@ -64,15 +82,25 @@ export const SettingsPage: React.FC = () => {
   const loadSettingsData = async () => {
     setLoading(true);
     try {
-      const [resSettings, resStations, resOverview] = await Promise.all([
+      const [resSettings, resStations, resOverview, resWh] = await Promise.all([
         adminApi.getSettings(),
-        adminApi.getStations(),
-        adminApi.getStorageOverview(30).catch(() => null)
+        adminApi.getStations({
+          businessId: selectedBizId !== 'ALL' ? selectedBizId : undefined,
+          warehouseId: selectedWhId !== 'ALL' ? selectedWhId : undefined
+        }),
+        adminApi.getStorageOverview(30).catch(() => null),
+        adminApi.getWarehouses(selectedBizId !== 'ALL' ? selectedBizId : undefined).catch(() => [])
       ]);
       setStorageConfigs(resSettings.storageConfigs || []);
       setSettings(prev => ({ ...prev, ...(resSettings.settings || {}) }));
       setStations(resStations || []);
+      setWarehouses(resWh || []);
       if (resOverview) setStorageOverview(resOverview);
+
+      if (user?.role === 'SUPER_ADMIN') {
+        const resTenants = await adminApi.getTenants().catch(() => []);
+        setTenants(resTenants || []);
+      }
     } catch (err: any) {
       console.error('Failed to load settings:', err);
     } finally {
@@ -80,26 +108,11 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleManualCleanup = async () => {
-    if (!window.confirm('Bạn có chắc chắn muốn kích hoạt dọn dẹp các video đóng gói đã quá hạn lưu trữ không? (Các video đang có tranh chấp khiếu nại sẽ được giữ an toàn 100%).')) {
-      return;
-    }
-    setIsCleaning(true);
-    try {
-      const res = await adminApi.cleanupStorage(30);
-      alert(res.message);
-      const updatedOverview = await adminApi.getStorageOverview(30);
-      setStorageOverview(updatedOverview);
-    } catch (err: any) {
-      alert(`Lỗi dọn dẹp: ${err.message}`);
-    } finally {
-      setIsCleaning(false);
-    }
-  };
+
 
   useEffect(() => {
     loadSettingsData();
-  }, []);
+  }, [selectedBizId, selectedWhId]);
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,9 +139,13 @@ export const SettingsPage: React.FC = () => {
       return;
     }
     try {
-      await adminApi.createStation(newStation);
+      await adminApi.createStation({
+        ...newStation,
+        warehouseId: newStation.warehouseId || (warehouses[0]?.id || undefined)
+      });
       setIsAddStationOpen(false);
       setNewStation({
+        warehouseId: '',
         code: '',
         name: '',
         computerName: '',
@@ -148,6 +165,7 @@ export const SettingsPage: React.FC = () => {
     if (!editingStation) return;
     try {
       await adminApi.updateStation(editingStation.id, {
+        warehouseId: editingStation.warehouseId,
         name: editingStation.name,
         code: editingStation.code,
         computerName: editingStation.computerName,
@@ -350,27 +368,27 @@ export const SettingsPage: React.FC = () => {
               </div>
               <div>
                 <h4 className="text-sm font-bold text-white flex items-center space-x-2">
-                  <span>TIẾN TRÌNH DỌN DẸP & LƯU TRỮ XOAY VÒNG TỰ ĐỘNG</span>
+                  <span>BẢN GỐC TẠI MÁY KHO • SAO LƯU GOOGLE DRIVE</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
-                    CHẠY ĐỊNH KỲ 12H / LẦN
+                    CHƯA BẬT TỰ XÓA
                   </span>
                 </h4>
                 <div className="text-xs text-slate-400 mt-1 flex items-center space-x-4 font-mono">
                   <span>Tổng video: <strong className="text-white">{storageOverview?.totalVideos || 0}</strong> ({((storageOverview?.totalBytes || 0) / (1024 * 1024)).toFixed(1)} MB)</span>
                   <span>Được bảo vệ (Tranh chấp): <strong className="text-blue-400">{storageOverview?.lockedVideosCount || 0}</strong></span>
-                  <span>Đã hết hạn (&gt;30 ngày): <strong className="text-amber-400">{storageOverview?.expiredVideosCount || 0}</strong> ({((storageOverview?.expiredBytes || 0) / (1024 * 1024)).toFixed(1)} MB)</span>
+                  <span>Video trên 30 ngày: <strong className="text-amber-400">{storageOverview?.expiredVideosCount || 0}</strong> ({((storageOverview?.expiredBytes || 0) / (1024 * 1024)).toFixed(1)} MB)</span>
                 </div>
               </div>
             </div>
 
             <button
               type="button"
-              onClick={handleManualCleanup}
-              disabled={isCleaning}
+              title="Chưa có chính sách xóa video tại kho và Google Drive"
+              disabled
               className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 transition shadow cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
-              <span>{isCleaning ? 'ĐANG DỌN DẸP...' : 'KÍCH HOẠT DỌN DẸP NGAY'}</span>
+              <span>GIỮ NGUYÊN VIDEO</span>
             </button>
           </div>
         </div>
@@ -467,17 +485,20 @@ export const SettingsPage: React.FC = () => {
 
         {/* Section 3: Stations and Cameras Detailed Management */}
         <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 shadow-xl space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center shrink-0">
                 <Camera className="w-5 h-5 text-purple-400" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">
-                  3. QUẢN LÝ BÀN ĐÓNG HÀNG & CẤU HÌNH CAMERA RTSP ({stations.length} CAMERA)
+                <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                  <span>3. QUẢN LÝ BÀN ĐÓNG HÀNG & CẤU HÌNH CAMERA RTSP</span>
+                  <span className="px-2 py-0.5 rounded-full bg-purple-950 border border-purple-700/50 text-purple-300 text-xs font-mono">
+                    {stations.length} Camera / Trạm
+                  </span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Cấu hình luồng RTSP camera, kiểm tra kết nối mạng LAN trực tiếp và gán camera cho từng trạm
+                  Mỗi trạm đóng gói được gắn 1 camera riêng biệt. Quản lý phân quyền theo từng Doanh nghiệp & Kho hàng
                 </p>
               </div>
             </div>
@@ -485,106 +506,209 @@ export const SettingsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsAddStationOpen(true)}
-              className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 transition shadow"
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 transition shadow-lg shrink-0 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>THÊM TRẠM & CAMERA MỚI</span>
             </button>
           </div>
 
+          {/* Scoping Filter Bar */}
+          <div className="bg-slate-900/90 border border-slate-700/70 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center space-x-1.5 text-slate-400 font-medium">
+                <Filter className="w-4 h-4 text-purple-400" />
+                <span>Lọc theo:</span>
+              </div>
+
+              {/* Company / Tenant Filter (SUPER_ADMIN) */}
+              {user?.role === 'SUPER_ADMIN' && (
+                <div className="flex items-center space-x-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-purple-400" />
+                  <select
+                    value={selectedBizId}
+                    onChange={e => {
+                      setSelectedBizId(e.target.value);
+                      setSelectedWhId('ALL');
+                    }}
+                    className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 font-semibold focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="ALL">🏢 Tất cả Doanh nghiệp / Shop</option>
+                    {tenants.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Warehouse Filter */}
+              <div className="flex items-center space-x-1.5">
+                <Warehouse className="w-3.5 h-3.5 text-amber-400" />
+                <select
+                  value={selectedWhId}
+                  onChange={e => setSelectedWhId(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 font-semibold focus:outline-none focus:border-amber-500"
+                >
+                  <option value="ALL">📦 Tất cả Kho hàng</option>
+                  {warehouses.map(wh => (
+                    <option key={wh.id} value={wh.id}>
+                      {wh.name} ({wh.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Quick Search */}
+            <div className="relative min-w-[220px]">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+              <input
+                type="text"
+                placeholder="Tìm mã trạm, tên, IP..."
+                value={stationSearch}
+                onChange={e => setStationSearch(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
           {/* Camera Grid Cards */}
           <div className="grid grid-cols-2 gap-4">
-            {stations.map(st => {
-              const test = camTestStatus[st.id] || {};
-              const rtspDisplay = st.camera?.rtspUrl || 'rtsp://mock-camera/live';
-              const camType = st.camera?.type || 'RTSP';
+            {stations
+              .filter(st => {
+                if (stationSearch) {
+                  const q = stationSearch.toLowerCase();
+                  return (
+                    st.name?.toLowerCase().includes(q) ||
+                    st.code?.toLowerCase().includes(q) ||
+                    st.computerName?.toLowerCase().includes(q) ||
+                    st.ipAddress?.toLowerCase().includes(q) ||
+                    st.businessName?.toLowerCase().includes(q) ||
+                    st.warehouseName?.toLowerCase().includes(q) ||
+                    st.camera?.rtspUrl?.toLowerCase().includes(q)
+                  );
+                }
+                return true;
+              })
+              .map(st => {
+                const test = camTestStatus[st.id] || {};
+                const rtspDisplay = st.camera?.rtspUrl || 'rtsp://mock-camera/live';
+                const camType = st.camera?.type || 'RTSP';
 
-              return (
-                <div key={st.id} className="bg-slate-900/90 border border-slate-700/80 rounded-2xl p-4.5 text-xs space-y-3 shadow-lg">
-                  {/* Card Header */}
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-8 h-8 rounded-lg bg-blue-950 border border-blue-600/40 flex items-center justify-center font-bold text-blue-400 text-xs">
-                        {st.code}
+                return (
+                  <div key={st.id} className="bg-slate-900/90 border border-slate-700/80 hover:border-slate-600 rounded-2xl p-5 text-xs flex flex-col justify-between shadow-xl transition space-y-4">
+                    {/* Card Header: Station Identity & Status */}
+                    <div className="flex items-start justify-between border-b border-slate-800 pb-3">
+                      <div className="flex items-start space-x-3 min-w-0">
+                        <span className="px-2.5 py-1 rounded-lg bg-blue-950/90 border border-blue-500/50 text-blue-300 font-mono font-bold text-xs shrink-0 tracking-wider shadow-inner">
+                          {st.code}
+                        </span>
+                        <div className="min-w-0">
+                          <span className="font-bold text-white text-base block leading-snug truncate" title={st.name}>
+                            {st.name}
+                          </span>
+
+                          {/* Scope tags: Company & Warehouse & PC */}
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            {st.businessName && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-purple-950/70 border border-purple-800/60 text-purple-300 text-[10px] font-medium">
+                                <Building2 className="w-3 h-3 mr-1 text-purple-400" />
+                                {st.businessName}
+                              </span>
+                            )}
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-medium">
+                              <Warehouse className="w-3 h-3 mr-1 text-amber-400" />
+                              {st.warehouseName || 'Kho trung tâm'}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono ml-0.5">
+                              PC: <strong className="text-slate-300">{st.computerName || 'PACK-PC'}</strong> ({st.ipAddress || '192.168.1.50'})
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <span className="font-bold text-white text-sm block leading-tight">{st.name}</span>
-                        <span className="text-[10px] text-slate-400">
-                          Máy: <strong className="text-slate-300 font-mono">{st.computerName || 'PACK-PC'}</strong> ({st.ipAddress || '192.168.1.50'})
+
+                      <div className="shrink-0 pl-2">
+                        <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border flex items-center space-x-1.5 ${
+                          st.status === 'ONLINE' ? 'bg-emerald-950/80 text-emerald-400 border-emerald-700/60' : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}>
+                          <span className={`w-2 h-2 rounded-full ${st.status === 'ONLINE' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span>{st.status}</span>
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center space-x-2">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                        st.status === 'ONLINE' ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}>
-                        {st.status}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditingStation(JSON.parse(JSON.stringify(st)))}
-                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center space-x-1 border border-slate-700 transition"
-                      >
-                        <Edit3 className="w-3.5 h-3.5 text-purple-400" />
-                        <span>Sửa Camera</span>
-                      </button>
-                    </div>
-                  </div>
+                    {/* Card Body: Camera Details */}
+                    <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800/90 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <Camera className="w-4 h-4 text-blue-400 shrink-0" />
+                          <span className="font-bold text-slate-200 text-xs">{st.camera?.name || 'CAM_' + st.code}</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-blue-300 text-[10px] font-mono border border-slate-700">
+                          {camType}
+                        </span>
+                      </div>
 
-                  {/* Camera Details */}
-                  <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80 space-y-2">
-                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-500 uppercase font-bold block mb-1">URL Luồng RTSP Stream:</span>
+                        <div className="font-mono text-[11px] text-emerald-400 break-all bg-black/60 px-3 py-2 rounded-lg border border-slate-800/90 select-all">
+                          {rtspDisplay}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card Footer: Connection Status & Dedicated Action Buttons */}
+                    <div className="border-t border-slate-800/90 pt-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center space-x-2">
-                        <Camera className="w-4 h-4 text-blue-400" />
-                        <span className="font-bold text-slate-200">{st.camera?.name || 'CAM_' + st.code}</span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-blue-300 text-[10px] font-mono border border-slate-700">
-                        {camType}
-                      </span>
-                    </div>
+                        <button
+                          type="button"
+                          disabled={test.testing}
+                          onClick={() => testCamera(st.id, rtspDisplay, st.ipAddress)}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-semibold rounded-xl text-xs flex items-center space-x-1.5 border border-slate-700 shadow-sm transition cursor-pointer"
+                        >
+                          {test.testing ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                          ) : (
+                            <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                          )}
+                          <span>{test.testing ? 'Đang ping...' : 'Test Ping RTSP'}</span>
+                        </button>
 
-                    <div>
-                      <span className="text-[10px] text-slate-500 uppercase font-bold block mb-0.5">URL Luồng RTSP Stream:</span>
-                      <div className="font-mono text-[11px] text-emerald-400 break-all bg-black/40 px-2.5 py-1.5 rounded-lg border border-slate-800 select-all">
-                        {rtspDisplay}
+                        {test.reachable !== undefined && !test.testing && (
+                          <div className={`text-[11px] flex items-center space-x-1 font-bold ${
+                            test.reachable ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {test.reachable ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+                            <span className="truncate max-w-[140px]" title={test.message}>{test.reachable ? 'Kết nối OK' : 'Không kết nối'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => setCalibratingStation(st)}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-blue-900/30 transition cursor-pointer"
+                          title="Cân chỉnh mắt camera: Zoom thu phóng & xoay lên/xuống/trái/phải"
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                          <span>Chỉnh Mắt Cam & Zoom</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingStation(JSON.parse(JSON.stringify(st)))}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 border border-slate-700 transition cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                          <span>Sửa Camera</span>
+                        </button>
                       </div>
                     </div>
                   </div>
-
-                  {/* Test Connection Row */}
-                  <div className="flex items-center justify-between pt-1">
-                    <div className="flex-1 mr-3">
-                      {test.testing ? (
-                        <div className="text-[11px] text-amber-400 flex items-center space-x-1.5 font-medium animate-pulse">
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Đang kiểm tra kết nối port 554...</span>
-                        </div>
-                      ) : test.reachable !== undefined ? (
-                        <div className={`text-[11px] flex items-center space-x-1.5 font-bold ${
-                          test.reachable ? 'text-emerald-400' : 'text-rose-400'
-                        }`}>
-                          {test.reachable ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-                          <span className="truncate">{test.message}</span>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-slate-500">Chưa kiểm tra kết nối</span>
-                      )}
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={test.testing}
-                      onClick={() => testCamera(st.id, rtspDisplay, st.ipAddress)}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-bold rounded-xl text-xs flex items-center space-x-1.5 border border-slate-700 shadow-sm transition"
-                    >
-                      <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Test Ping RTSP</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
 
           {/* Quick Camera Setup Best Practices Banner */}
@@ -713,6 +837,22 @@ export const SettingsPage: React.FC = () => {
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white font-mono focus:outline-none"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Kho hàng trực thuộc:</label>
+                <select
+                  value={editingStation.warehouseId || ''}
+                  onChange={e => setEditingStation({ ...editingStation, warehouseId: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white font-semibold focus:outline-none"
+                >
+                  <option value="">-- Chọn Kho hàng --</option>
+                  {warehouses.map(wh => (
+                    <option key={wh.id} value={wh.id}>
+                      {wh.name} ({wh.code}) {wh.businessName ? `— ${wh.businessName}` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Camera Section inside Modal */}
@@ -917,6 +1057,22 @@ export const SettingsPage: React.FC = () => {
               </div>
 
               <div>
+                <label className="block text-slate-300 mb-1">Kho hàng trực thuộc:</label>
+                <select
+                  value={newStation.warehouseId}
+                  onChange={e => setNewStation({ ...newStation, warehouseId: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white font-semibold focus:outline-none"
+                >
+                  <option value="">-- Mặc định kho hiện tại --</option>
+                  {warehouses.map(wh => (
+                    <option key={wh.id} value={wh.id}>
+                      {wh.name} ({wh.code}) {wh.businessName ? `— ${wh.businessName}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-slate-300 mb-1">URL Camera RTSP (hoặc để trống nếu dùng Webcam):</label>
                 <input
                   type="text"
@@ -946,6 +1102,13 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Camera Calibration & Zoom Modal */}
+      <CameraCalibrationModal
+        isOpen={!!calibratingStation}
+        station={calibratingStation}
+        onClose={() => setCalibratingStation(null)}
+      />
     </div>
   );
 };

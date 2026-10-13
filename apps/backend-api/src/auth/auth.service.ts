@@ -14,20 +14,45 @@ export class AuthService {
   }
 
   static generateTokens(payload: Omit<JwtTokenPayload, 'iat' | 'exp'>): AuthTokens {
-    const accessToken = jwt.sign(payload, config.jwtSecret, {
-      expiresIn: '8h'
+    const accessToken = jwt.sign({ ...payload, tokenUse: 'access' }, config.jwtSecret, {
+      algorithm: 'HS256',
+      expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn']
     });
-    const refreshToken = jwt.sign({ sub: payload.sub }, config.jwtSecret, {
-      expiresIn: '7d'
+    const refreshToken = jwt.sign({ sub: payload.sub, tokenUse: 'refresh' }, config.jwtSecret, {
+      algorithm: 'HS256',
+      expiresIn: config.refreshTokenExpiresIn as jwt.SignOptions['expiresIn']
     });
     return {
       accessToken,
       refreshToken,
-      expiresIn: 28800
+      expiresIn: (jwt.decode(accessToken) as jwt.JwtPayload).exp! - (jwt.decode(accessToken) as jwt.JwtPayload).iat!
     };
   }
 
   static verifyToken(token: string): JwtTokenPayload {
-    return jwt.verify(token, config.jwtSecret) as JwtTokenPayload;
+    return this.verifyTokenUse(token, 'access') as unknown as JwtTokenPayload;
+  }
+
+  static verifyRefreshToken(token: string): { sub: string } {
+    return this.verifyTokenUse(token, 'refresh') as { sub: string };
+  }
+
+  static createPlaybackTicket(userId: string, videoId: string): string {
+    return jwt.sign({ sub: userId, videoId, tokenUse: 'video-playback' }, config.jwtSecret, { algorithm: 'HS256', expiresIn: '15m' });
+  }
+
+  static verifyPlaybackTicket(token: string, videoId: string): { sub: string } {
+    const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+    if (typeof payload === 'string' || payload.tokenUse !== 'video-playback' || payload.videoId !== videoId || !payload.sub) throw new Error('Invalid playback ticket');
+    return { sub: payload.sub };
+  }
+
+  private static verifyTokenUse(token: string, expectedUse: 'access' | 'refresh'): jwt.JwtPayload {
+    const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+    if (typeof payload === 'string' || payload.tokenUse !== expectedUse ||
+        typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') {
+      throw new Error('Invalid token type or claims');
+    }
+    return payload;
   }
 }

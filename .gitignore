@@ -10,6 +10,7 @@ build/
 # Environment variables
 .env
 .env.local
+*.worker.env
 .env.*.local
 !.env.example
 

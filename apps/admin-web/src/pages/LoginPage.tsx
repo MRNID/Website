@@ -18,6 +18,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
     setError(null);
     try {
       const user = await adminApi.login(username, password);
+      if (user.role === 'PACKING_USER') {
+        adminApi.setToken(null);
+        setError('Tài khoản nhân viên đóng gói không có quyền truy cập Cổng Quản Trị. Vui lòng đăng nhập tại Bàn Đóng Gói (http://localhost:3000).');
+        return;
+      }
       onSuccess(user);
     } catch (err: any) {
       setError(err.message || 'Tên đăng nhập hoặc mật khẩu quản trị không đúng');

@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:4000/api/v1';
+import { API_BASE } from './endpoints';
 
 export interface UserSession {
   id: string;
@@ -71,9 +71,12 @@ class ApiService {
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       ...(options.headers as any),
     };
+
+    if (options.body) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;

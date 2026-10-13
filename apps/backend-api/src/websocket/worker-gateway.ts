@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import * as crypto from 'node:crypto';
 import { DatabaseRepository } from '@packing-proof/database';
 import { StationGateway } from './station-gateway.js';
+import { CustomerStorageService } from '../services/customer-storage.service.js';
 import {
   WorkerCommandMessage,
   WorkerStartCommandPayload,
@@ -14,13 +15,30 @@ interface ConnectedWorker {
   workerEpoch: string;
   ws: WebSocket;
   lastHeartbeat: Date;
+  tokenHash: string;
   status: 'ONLINE' | 'SUSPECTED_OFFLINE';
 }
 
 export class WorkerGateway {
   private static workersByStation = new Map<string, ConnectedWorker>();
+  private static pending = new Map<string, { worker: ConnectedWorker; resolve: (data: any) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
+
+  static async requestStorage(stationId: string, operation: string, payload: unknown, timeoutMs = 30000): Promise<any> {
+    const worker = this.workersByStation.get(stationId);
+    if (!worker || !this.isWorkerConnected(stationId)) throw new Error('Máy kho đang ngoại tuyến. Hãy bật máy và kiểm tra kết nối.');
+    if (this.pending.size >= 128 || [...this.pending.values()].filter(p => p.worker === worker).length >= 16) throw new Error('Máy kho đang bận, vui lòng thử lại.');
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(requestId); reject(new Error('Máy kho không phản hồi kịp thời')); }, timeoutMs);
+      this.pending.set(requestId, { worker, resolve, reject, timer });
+      worker.ws.send(JSON.stringify({ type: 'STORAGE_REQUEST', requestId, operation, payload }), err => {
+        if (err) { clearTimeout(timer); this.pending.delete(requestId); reject(err); }
+      });
+    });
+  }
 
   static async handleConnection(ws: WebSocket, stationId: string, token: string): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/i.test(stationId) || token.length < 32) { ws.close(4001, 'Worker credentials required'); return; }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const isValid = await DatabaseRepository.verifyWorkerToken(stationId, tokenHash);
 
@@ -35,9 +53,11 @@ export class WorkerGateway {
       workerEpoch,
       ws,
       lastHeartbeat: new Date(),
+      tokenHash,
       status: 'ONLINE'
     };
 
+    this.workersByStation.get(stationId)?.ws.close(4002, 'Replaced by new worker connection');
     this.workersByStation.set(stationId, workerInfo);
     console.log(`[WorkerGateway] Station Worker Connected: ${stationId} (Epoch: ${workerEpoch})`);
 
@@ -58,15 +78,37 @@ export class WorkerGateway {
       }
     });
 
+    ws.on('error', () => ws.close());
     ws.on('close', () => {
       console.log(`[WorkerGateway] Station Worker Disconnected: ${stationId}`);
-      this.workersByStation.delete(stationId);
+      if (this.workersByStation.get(stationId) === workerInfo) this.workersByStation.delete(stationId);
+      for (const [id, pending] of this.pending) {
+        if (pending.worker !== workerInfo) continue;
+        clearTimeout(pending.timer);
+        pending.reject(new Error('Máy kho đã ngắt kết nối'));
+        this.pending.delete(id);
+      }
     });
   }
 
   private static async handleWorkerMessage(worker: ConnectedWorker, msg: any): Promise<void> {
+    if (this.workersByStation.get(worker.stationId) !== worker || msg.workerEpoch !== worker.workerEpoch) return;
+    if (msg.type === 'STORAGE_RESPONSE') {
+      const pending = this.pending.get(msg.requestId);
+      if (!pending || pending.worker !== worker) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(msg.requestId);
+      if (msg.success) pending.resolve(msg.data);
+      else pending.reject(new Error(String(msg.error || 'Lỗi đọc dữ liệu máy kho').slice(0, 300)));
+      return;
+    }
+    if (msg.sessionId) {
+      const session = await DatabaseRepository.findSessionById(msg.sessionId);
+      if (!session || (session.stationId || session.station_id) !== worker.stationId) return;
+    }
     switch (msg.type) {
       case 'WORKER_HEARTBEAT':
+        if (!await DatabaseRepository.verifyWorkerToken(worker.stationId, worker.tokenHash)) { worker.ws.close(4001, 'Worker credential revoked'); return; }
         worker.lastHeartbeat = new Date();
         await DatabaseRepository.updateWorkerHeartbeat(worker.stationId, worker.workerEpoch, msg.telemetry);
         worker.ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', timestamp: new Date().toISOString() }));
@@ -85,27 +127,11 @@ export class WorkerGateway {
         }
         break;
 
-      case 'FINALIZE_SUCCESS':
-        console.log(`[WorkerGateway] Session ${msg.sessionId} Finalized: ${msg.video.filename} (${msg.video.duration}s, SHA: ${msg.video.sha256})`);
-        const videoId = await DatabaseRepository.recordFinalizedVideo({
-          sessionId: msg.sessionId,
-          filename: msg.video.filename,
-          localPath: msg.video.localPath,
-          duration: msg.video.duration,
-          fileSize: msg.video.fileSize,
-          sha256: msg.video.sha256,
-          thumbnailPath: msg.video.thumbnailPath
-        });
-
-        // ACK event to worker so worker removes it from local outbound queue
+      case 'FINALIZE_SUCCESS': {
+        await CustomerStorageService.register(worker.stationId, { ...msg.video, sessionId: msg.sessionId });
         worker.ws.send(JSON.stringify({ type: 'EVENT_ACK', eventId: msg.eventId }));
-
-        // Broadcast to User Web / Admin Web
-        StationGateway.broadcastSessionState(msg.sessionId, worker.stationId, 'COMPLETED', undefined, {
-          videoId,
-          video: msg.video
-        });
         break;
+      }
 
       case 'FINALIZE_FAILED':
         console.error(`[WorkerGateway] Session ${msg.sessionId} Finalize Failed:`, msg.error);
@@ -121,16 +147,15 @@ export class WorkerGateway {
         break;
 
       case 'SYNC_STATUS_CHANGED':
-        console.log(`[WorkerGateway] Video ${msg.videoId} NAS Sync Status: ${msg.syncStatus}`);
-        await DatabaseRepository.updateVideoSyncStatus(msg.videoId, msg.syncStatus, msg.nasPath, msg.error);
+        // NAS acknowledgements must never mark a Google Drive copy verified.
         worker.ws.send(JSON.stringify({ type: 'EVENT_ACK', eventId: msg.eventId }));
-        StationGateway.broadcast('SYNC_STATUS_CHANGED', { videoId: msg.videoId, syncStatus: msg.syncStatus });
         break;
     }
   }
 
   static isWorkerConnected(stationId: string): boolean {
-    return this.workersByStation.has(stationId);
+    const worker = this.workersByStation.get(stationId);
+    return !!worker && worker.ws.readyState === WebSocket.OPEN && Date.now() - worker.lastHeartbeat.getTime() < 45000;
   }
 
   static getWorkerEpoch(stationId: string): string | null {

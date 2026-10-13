@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, Lock, Unlock, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { VideoRecord, adminApi, HashVerifyResult } from '../services/api';
 
@@ -11,6 +11,19 @@ interface VideoPlayerModalProps {
 export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ video, onClose, onUpdated }) => {
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<HashVerifyResult | null>(null);
+  const [playback, setPlayback] = useState<{ url: string; source: string } | null>(null);
+  const [playbackError, setPlaybackError] = useState('');
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
+
+  useEffect(() => {
+    let disposed = false;
+    setPlayback(null);
+    setPlaybackError('');
+    if (video) adminApi.getVideoPlayback(video.id).then(result => {
+      if (!disposed) setPlayback(result);
+    }).catch(error => { if (!disposed) setPlaybackError(error.message); });
+    return () => { disposed = true; };
+  }, [video?.id, playbackAttempt]);
 
   // Dispute editing state
   const [isLocked, setIsLocked] = useState(video?.is_locked || false);
@@ -20,8 +33,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ video, onClo
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   if (!video) return null;
-
-  const streamUrl = adminApi.getVideoStreamUrl(video.id);
 
   const handleVerifyHash = async () => {
     setIsVerifying(true);
@@ -81,14 +92,18 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ video, onClo
           {/* Left: Video Player (7 cols) */}
           <div className="col-span-7 flex flex-col space-y-3">
             <div className="relative aspect-video bg-black rounded-2xl overflow-hidden border border-slate-700 shadow-inner flex items-center justify-center">
-              <video
-                src={streamUrl}
+              {playback && !playbackError ? <video
+                src={playback.url}
+                onError={() => setPlaybackError('Chưa đọc được video. Kiểm tra máy kho hoặc thử mở lại bản sao Drive.')}
                 controls
                 autoPlay
                 className="w-full h-full object-contain"
               >
                 Trình duyệt không hỗ trợ phát thẻ video HTML5.
-              </video>
+              </video> : <div className="text-sm text-slate-300 p-5 text-center">
+                <p>{playbackError || 'Đang kết nối tới nơi lưu video...'}</p>
+                {playbackError && <button className="mt-3 text-blue-300 underline" onClick={() => setPlaybackAttempt(n => n + 1)}>Thử lại</button>}
+              </div>}
             </div>
 
             {/* Quick Playback Info */}
@@ -104,10 +119,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ video, onClo
                 </span>
               </div>
               <div>
-                <span className="text-slate-500 block text-[10px]">Trạng thái NAS:</span>
-                <span className="font-semibold text-emerald-400">{video.sync_status}</span>
+                <span className="text-slate-500 block text-[10px]">Bản sao Google Drive:</span>
+                <span className="font-semibold text-emerald-400">{({ SYNCED: 'Đã xác nhận', SYNCING: 'Đang tải', FAILED: 'Sẽ thử lại', PENDING: 'Chờ đồng bộ', LOCAL: 'Chỉ có tại kho' } as Record<string, string>)[video.sync_status] || video.sync_status}</span>
               </div>
             </div>
+            <p className="text-xs text-slate-400">Nguồn xem: {playback?.source === 'GOOGLE_DRIVE' ? 'Google Drive của khách hàng' : 'Máy tại kho'}. Server không giữ bản video.</p>
           </div>
 
           {/* Right: Forensic Details & Dispute Lock (5 cols) */}

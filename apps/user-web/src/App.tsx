@@ -8,6 +8,7 @@ import { OrderPackingSlip } from './components/OrderPackingSlip';
 import { DuplicateWarningModal } from './components/DuplicateWarningModal';
 import { ForceUnlockModal } from './components/ForceUnlockModal';
 import { LoginModal } from './components/LoginModal';
+import { MobilePackingWorkbench } from './components/MobilePackingWorkbench';
 import { api, UserSession, StationInfo } from './services/api';
 import { useBarcodeScanner } from './hooks/useBarcodeScanner';
 import { useStationWebSocket } from './hooks/useStationWebSocket';
@@ -51,7 +52,13 @@ export default function App() {
   const [workerOnline, setWorkerOnline] = useState<boolean>(true);
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(false);
+  const [isMobileMode, setIsMobileMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 768 || window.location.search.includes('mobile');
+    }
+    return false;
+  });
 
   const timerRef = useRef<any>(null);
   const activeTrackingCodeRef = useRef<string>('');
@@ -195,8 +202,30 @@ export default function App() {
     onErrorAlert: (data) => {
       sounds.playErrorBuzz();
       setErrorMessage(data.message);
+    },
+    onOrdersUpdated: (data) => {
+      console.log('[WS] Realtime orders updated:', data);
+      loadOrdersQueue();
     }
   });
+
+  // Realtime polling for newly printed orders (every 3.5s when IDLE / COMPLETED)
+  useEffect(() => {
+    if (sessionState !== 'IDLE' && sessionState !== 'COMPLETED') return;
+    const pollInterval = setInterval(() => {
+      loadOrdersQueue();
+    }, 3500);
+    return () => clearInterval(pollInterval);
+  }, [sessionState, loadOrdersQueue]);
+
+  // Realtime instant refresh when returning to tab/window
+  useEffect(() => {
+    const handleFocus = () => {
+      loadOrdersQueue();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [loadOrdersQueue]);
 
   // 4. Start Packing flow
   const executeStartPacking = async (codeToPack: string) => {
@@ -317,6 +346,29 @@ export default function App() {
     }
   };
 
+  // Quick bypass / visual verification for all items
+  const handleCheckAllItems = () => {
+    if (!currentCustomer?.items) return;
+    const allCounts: Record<number, number> = {};
+    const allChecks: Record<number, boolean> = {};
+    currentCustomer.items.forEach((it: any, idx: number) => {
+      allCounts[idx] = it.quantity;
+      allChecks[idx] = true;
+    });
+    setScannedItemCounts(allCounts);
+    setCheckedItems(allChecks);
+    soundEffects.playAllItemsPackedSound();
+    setLastScannedAlert({
+      type: 'success',
+      message: '⚡ ĐÃ XÁC THỰC NHANH 100% SẢN PHẨM TRONG ĐƠN'
+    });
+  };
+
+  const currentItems = currentCustomer?.items || [];
+  const isAllItemsPacked =
+    currentItems.length > 0 &&
+    currentItems.every((it: any, idx: number) => checkedItems[idx] || (scannedItemCounts[idx] || 0) >= it.quantity);
+
   // 5. Stop Packing flow
   const handleStopPacking = async () => {
     if (!sessionId) return;
@@ -391,6 +443,31 @@ export default function App() {
     enabled: !isLoginOpen && !isDuplicateModalOpen && !isForceUnlockOpen
   });
 
+  // 7.1 Sync Real Station State (F8 refresh)
+  const syncStationRealState = useCallback(async () => {
+    if (!currentStation) return;
+    try {
+      const activeData = await api.getStationActive(currentStation.id);
+      setWorkerOnline(activeData.worker?.status === 'ONLINE');
+
+      if (activeData.activeSession) {
+        setSessionId(activeData.activeSession.sessionId);
+        setSessionState(activeData.activeSession.status as SessionState);
+        setElapsedSeconds(activeData.activeSession.elapsedSeconds || 0);
+        setErrorMessage(`Trạm đang có phiên ${activeData.activeSession.status} (${activeData.activeSession.sessionId.slice(0, 8)}). Nhấn [F4] để dừng hoặc [ESC] để hủy.`);
+      } else {
+        setSessionState('IDLE');
+        setSessionId(null);
+        setTrackingCode('');
+        setTrackingInput('');
+        setErrorMessage(null);
+        setCurrentCustomer(null);
+      }
+    } catch (err: any) {
+      setErrorMessage(`Lỗi kiểm tra trạng thái trạm: ${err.message}`);
+    }
+  }, [currentStation]);
+
   // 8. Global Keyboard Hotkeys [F2, F4, Space, Esc, F8]
   useEffect(() => {
     const handleKeyShortcuts = (e: KeyboardEvent) => {
@@ -411,6 +488,9 @@ export default function App() {
         if (sessionState === 'RECORDING') {
           handleStopPacking();
         }
+      } else if (e.key === 'F8') {
+        e.preventDefault();
+        syncStationRealState();
       } else if (e.key === 'Escape') {
         if (isDuplicateModalOpen) {
           e.preventDefault();
@@ -443,6 +523,17 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyShortcuts);
   }, [sessionState, trackingInput, sessionId, pendingOrders, isDuplicateModalOpen, duplicateInfo]);
 
+  if (isMobileMode) {
+    return (
+      <MobilePackingWorkbench
+        user={user}
+        onExitMobileMode={() => setIsMobileMode(false)}
+        stationCode={currentStation?.code}
+        stations={stations}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 select-none overflow-hidden font-sans">
       {/* Top Application Header */}
@@ -453,6 +544,7 @@ export default function App() {
         onSelectStation={(st) => setCurrentStation(st)}
         workerOnline={workerOnline}
         wsConnected={wsConnected}
+        onToggleMobileMode={() => setIsMobileMode(true)}
         onLogout={() => {
           api.setToken(null);
           setUser(null);
@@ -461,8 +553,8 @@ export default function App() {
       />
 
       {/* Main Packing Station Workbench */}
-      <main className="flex-1 p-5 flex flex-col space-y-4 overflow-hidden">
-        {/* Giant Status Banner */}
+      <main className="flex-1 p-3.5 flex flex-col space-y-2.5 overflow-hidden">
+        {/* Compact Status Banner */}
         <StatusBanner
           state={sessionState}
           trackingCode={trackingCode}
@@ -472,15 +564,16 @@ export default function App() {
           completedDuration={completedDuration}
         />
 
-        {/* Center Grid: Viewport + Controls + History */}
-        <div className="flex-1 grid grid-cols-12 gap-5 min-h-0">
-          {/* Left Column: Camera Viewport + Order Checklist / Pending Queue (7 cols) */}
-          <div className="col-span-7 flex flex-col space-y-3.5 h-full overflow-y-auto pr-1">
-            <div className="h-[310px] shrink-0">
+        {/* Center Grid: 2 Columns (Left ~60% Camera + History, Right ~40% Barcode -> Checklist -> Controls) */}
+        <div className="flex-1 grid grid-cols-12 gap-3.5 min-h-0">
+          {/* Left Column: Camera Viewport (~60% width) + Packed History */}
+          <div className="col-span-7 flex flex-col space-y-2.5 h-full min-h-0">
+            <div className="flex-1 min-h-[300px]">
               <CameraViewport
                 stationId={currentStation?.id}
                 stationCode={currentStation?.code || 'PACK01'}
                 cameraName={currentStation?.camera?.name || 'CAM_PACK01'}
+                packerName={user?.username || 'packer01'}
                 state={sessionState}
                 trackingCode={trackingCode}
                 elapsedSeconds={elapsedSeconds}
@@ -511,29 +604,16 @@ export default function App() {
               />
             </div>
 
-            <OrderPackingSlip
-              trackingCode={trackingCode}
-              orderCode={orderCode}
-              platform={orderPlatform}
-              customer={currentCustomer}
-              checkedItems={checkedItems}
-              onToggleItem={(idx) => setCheckedItems((prev) => ({ ...prev, [idx]: !prev[idx] }))}
-              pendingOrders={pendingOrders}
-              onSelectPendingOrder={(ord) => {
-                setTrackingInput(ord.trackingCode);
-                executeStartPacking(ord.trackingCode);
-              }}
-              onSeedOrders={handleSeedOrders}
-              isSeeding={isSeedingOrders}
-              isRecording={sessionState === 'RECORDING' || sessionState === 'PROCESSING'}
-              scannedCounts={scannedItemCounts}
-              onSimulateScanSku={handleScanProductSku}
-              lastScannedAlert={lastScannedAlert}
-            />
+            <div className="h-[210px] shrink-0">
+              <PackingHistory
+                sessions={recentSessions}
+                isLoading={historyLoading}
+              />
+            </div>
           </div>
 
-          {/* Right Column: Ergonomic Controls + Packed History (5 cols) */}
-          <div className="col-span-5 flex flex-col space-y-4 h-full">
+          {/* Right Column: Thao tác (~40% width): Mã vận đơn -> Checklist -> Nút chính pinned */}
+          <div className="col-span-5 flex flex-col h-full min-h-0">
             <ActionControls
               state={sessionState}
               trackingInput={trackingInput}
@@ -549,14 +629,32 @@ export default function App() {
               }}
               onOpenForceUnlock={() => setIsForceUnlockOpen(true)}
               isActionLoading={isActionLoading}
-            />
-
-            <div className="flex-1 min-h-0">
-              <PackingHistory
-                sessions={recentSessions}
-                isLoading={historyLoading}
+              workerOnline={workerOnline}
+              userRole={user?.role}
+              onScanProductSku={handleScanProductSku}
+              isAllItemsPacked={isAllItemsPacked}
+            >
+              <OrderPackingSlip
+                trackingCode={trackingCode}
+                orderCode={orderCode}
+                platform={orderPlatform}
+                customer={currentCustomer}
+                checkedItems={checkedItems}
+                onToggleItem={(idx) => setCheckedItems((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+                onCheckAllItems={handleCheckAllItems}
+                pendingOrders={pendingOrders}
+                onSelectPendingOrder={(ord) => {
+                  setTrackingInput(ord.trackingCode);
+                  executeStartPacking(ord.trackingCode);
+                }}
+                onSeedOrders={handleSeedOrders}
+                isSeeding={isSeedingOrders}
+                isRecording={sessionState === 'RECORDING' || sessionState === 'PROCESSING'}
+                scannedCounts={scannedItemCounts}
+                onSimulateScanSku={handleScanProductSku}
+                lastScannedAlert={lastScannedAlert}
               />
-            </div>
+            </ActionControls>
           </div>
         </div>
       </main>

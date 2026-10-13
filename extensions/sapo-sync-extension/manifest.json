@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Sapo to Packing Proof Sync",
+  "version": "1.0.3",
+  "description": "Tự động bắt đơn hàng và mã SKU từ Sapo đẩy sang hệ thống Video Đóng Gói (Không cần Sapo mở API)",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sapo Packing Sync"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.mysapo.net/*",
+    "*://*.pos.sapo.vn/*",
+    "*://*.mysapogo.com/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "http://192.168.*:*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.mysapo.net/*",
+        "*://*.pos.sapo.vn/*",
+        "*://*.mysapogo.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_end"
+    }
+  ]
+}

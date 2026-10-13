@@ -11,13 +11,24 @@ GO
 USE packing_proof_db;
 GO
 
--- 1. BUSINESSES
+-- 1. BUSINESSES (Tenants / Companies)
 IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[businesses]') AND type in (N'U'))
 BEGIN
     CREATE TABLE [dbo].[businesses] (
         [id] VARCHAR(36) NOT NULL PRIMARY KEY DEFAULT CONVERT(VARCHAR(36), NEWID()),
         [name] NVARCHAR(100) NOT NULL,
         [code] VARCHAR(50) NOT NULL UNIQUE,
+        [contact_name] NVARCHAR(100) NULL,
+        [phone] VARCHAR(20) NULL,
+        [email] VARCHAR(100) NULL,
+        [plan_tier] VARCHAR(30) NOT NULL DEFAULT 'STARTER',
+        [monthly_order_limit] INT NOT NULL DEFAULT 1000,
+        [max_stations] INT NOT NULL DEFAULT 1,
+        [retention_days] INT NOT NULL DEFAULT 30,
+        [subscription_status] VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
+        [subscription_expires_at] DATETIME NULL,
+        [price_per_month] DECIMAL(18, 0) NOT NULL DEFAULT 299000,
+        [notes] NVARCHAR(MAX) NULL,
         [is_active] BIT NOT NULL DEFAULT 1,
         [created_at] DATETIME NOT NULL DEFAULT GETDATE(),
         [updated_at] DATETIME NOT NULL DEFAULT GETDATE()
@@ -342,4 +353,12 @@ BEGIN
         RETURN;
     END
 END;
+GO
+
+-- Additive migration. Existing rows remain LEGACY until their physical owner is audited.
+IF COL_LENGTH('dbo.videos', 'storage_owner') IS NULL
+  ALTER TABLE dbo.videos ADD storage_owner VARCHAR(20) NOT NULL CONSTRAINT DF_videos_storage_owner DEFAULT 'LEGACY';
+GO
+IF COL_LENGTH('dbo.videos', 'drive_file_id') IS NULL
+  ALTER TABLE dbo.videos ADD drive_file_id VARCHAR(200) NULL;
 GO

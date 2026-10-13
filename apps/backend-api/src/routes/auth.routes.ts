@@ -69,9 +69,9 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      const decoded = AuthService.verifyToken(refreshToken);
+      const decoded = AuthService.verifyRefreshToken(refreshToken);
       const user = await DatabaseRepository.findUserById(decoded.sub);
-      if (!user) {
+      if (!user || !user.isActive) {
         return reply.status(401).send({
           success: false,
           error: { code: 'USER_NOT_FOUND', message: 'User account no longer exists' }

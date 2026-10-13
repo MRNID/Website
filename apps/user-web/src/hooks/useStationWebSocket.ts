@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { STATION_SOCKET_URL } from '../services/endpoints';
 
 export interface StationSocketEvents {
   onSessionStateChanged?: (data: { sessionId: string; state: string; timestamp: string }) => void;
   onWorkerStatusChanged?: (data: { status: string; storage?: any }) => void;
   onStorageAlert?: (data: any) => void;
   onErrorAlert?: (data: { code: string; message: string }) => void;
+  onOrdersUpdated?: (data: any) => void;
 }
 
 export function useStationWebSocket(stationId: string | null, events: StationSocketEvents) {
@@ -21,7 +23,10 @@ export function useStationWebSocket(stationId: string | null, events: StationSoc
       wsRef.current.close();
     }
 
-    const wsUrl = `ws://localhost:4000/ws/station?stationId=${stationId}`;
+    const token = localStorage.getItem('token') || '';
+    if (!token) return;
+
+    const wsUrl = `${STATION_SOCKET_URL}?stationId=${encodeURIComponent(stationId)}&token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -48,6 +53,9 @@ export function useStationWebSocket(stationId: string | null, events: StationSoc
           case 'ERROR_ALERT':
             eventsRef.current.onErrorAlert?.(message.data);
             break;
+          case 'ORDERS_UPDATED':
+            eventsRef.current.onOrdersUpdated?.(message.data);
+            break;
           default:
             break;
         }
@@ -56,9 +64,14 @@ export function useStationWebSocket(stationId: string | null, events: StationSoc
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       setIsConnected(false);
       wsRef.current = null;
+      // If server revoked session or forbidden (code 4001), do not reconnect
+      if (event.code === 4001) {
+        console.warn('[useStationWebSocket] Session revoked or station access denied.');
+        return;
+      }
       // Reconnect after 3 seconds
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => {

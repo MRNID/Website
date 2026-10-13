@@ -27,6 +27,31 @@ describe('Barcode Validator', () => {
   test('rejects too short or noisy barcode', () => {
     const res = validateAndCleanBarcode('123');
     assert.equal(res.isValid, false);
+    assert.equal(res.cleanedCode, '');
+  });
+
+  test('rejects empty or whitespace barcode', () => {
+    assert.equal(validateAndCleanBarcode('').isValid, false);
+    assert.equal(validateAndCleanBarcode('   ').isValid, false);
+  });
+
+  test('rejects short demo codes under 6 chars', () => {
+    assert.equal(validateAndCleanBarcode('DEMO').isValid, false);
+    assert.equal(validateAndCleanBarcode('TEST').isValid, false);
+    assert.equal(validateAndCleanBarcode('A123').isValid, false);
+  });
+
+  test('rejects codes containing spaces or illegal characters', () => {
+    assert.equal(validateAndCleanBarcode('SPX VN 0458892182B').isValid, false);
+    assert.equal(validateAndCleanBarcode('ORDER#123@456').isValid, false);
+    assert.equal(validateAndCleanBarcode('DEMO/TEST/123').isValid, false);
+  });
+
+  test('validates standard custom / OTHER barcodes of 6 to 32 chars', () => {
+    const res = validateAndCleanBarcode('CUSTOM-ORDER-001');
+    assert.equal(res.isValid, true);
+    assert.equal(res.platform, 'OTHER');
+    assert.equal(res.cleanedCode, 'CUSTOM-ORDER-001');
   });
 });
 
